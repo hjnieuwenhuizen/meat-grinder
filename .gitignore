@@ -1,6 +1,11 @@
 node_modules
 dist
 functions/lib
+
+# personal deployment config — see README "Run your own"
+.firebaserc
+.env.local
+.env
 .firebase
 *.log
 .DS_Store

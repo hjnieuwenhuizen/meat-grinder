@@ -3,18 +3,19 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signO
 import { getFirestore } from 'firebase/firestore'
 import { getFunctions } from 'firebase/functions'
 
+// Point the app at your own Firebase project via .env.local — see .env.example
 const app = initializeApp({
-  apiKey: 'AIzaSyCWA0HX45p_Ya-1GgIdr51a5xvfkcp0WWA',
-  authDomain: 'meat-grinder-88722.firebaseapp.com',
-  projectId: 'meat-grinder-88722',
-  storageBucket: 'meat-grinder-88722.firebasestorage.app',
-  messagingSenderId: '21326285887',
-  appId: '1:21326285887:web:a79582aedc7080a3f37c8a',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 })
 
 export const auth = getAuth(app)
 export const db = getFirestore(app)
-export const functions = getFunctions(app, 'europe-west1')
+export const functions = getFunctions(app, import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION ?? 'europe-west1')
 
 export const signIn = () =>
   signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => {

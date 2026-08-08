@@ -47,7 +47,7 @@ firebase deploy --only firestore:rules
 ## Do not
 
 - Do not store Garmin (or any) passwords — the connect flow exchanges credentials for tokens server-side and discards them.
-- Do not commit secrets. Firebase web config in `src/lib/firebase.js` is public by design; everything else goes through Secret Manager or Firestore.
+- Do not commit secrets or personal deployment config. Firebase web config comes from `.env.local` (gitignored, template in `.env.example`); `.firebaserc` is gitignored — never hardcode project ids in source.
 - Do not add weight tracking, AI coaching, or activity-based carb presets without being asked — considered and deliberately deferred.
 - Do not loosen Firestore rules: user data is owner-only (`request.auth.uid == uid`).
 - Do not switch the timezone handling without a plan: day keys are currently computed in Africa/Johannesburg (client uses local time; functions pin TZ).

@@ -84,18 +84,45 @@ garminUsers/{uid}        sync registry
 
 Entries are **denormalized** — macros are baked in at log time, so editing a library food never rewrites history.
 
-## Running it yourself
+## Run your own
+
+The repo carries no project config — you point it at your own Firebase project.
+
+**1. Create a Firebase project** at [console.firebase.google.com](https://console.firebase.google.com), then enable:
+- **Authentication** → Sign-in method → **Google**
+- **Firestore** (production mode — the rules in this repo lock data to its owner)
+
+**2. Register a web app** (Project settings → Your apps → Web) and copy its config:
 
 ```bash
-git clone <this repo> && cd meat-grinder
+git clone https://github.com/hjnieuwenhuizen/meat-grinder.git && cd meat-grinder
 npm install
-# 1. Create a Firebase project; enable Google auth + Firestore
-# 2. Replace the config in src/lib/firebase.js and .firebaserc
-npm run dev                            # local dev
-npm run build && firebase deploy       # ship it
+cp .env.example .env.local        # paste your Firebase web config values here
 ```
 
-Garmin sync (optional) needs the Blaze plan: `firebase deploy --only functions`. If Garmin rate-limits cloud logins, `node functions/bootstrap.js` generates tokens locally to paste into the app.
+**3. Link the Firebase CLI to your project:**
+
+```bash
+npm i -g firebase-tools
+firebase login
+firebase use --add                # select your project → creates your .firebaserc
+```
+
+**4. Run and ship:**
+
+```bash
+npm run dev                                        # local dev
+npm run build
+firebase deploy --only hosting,firestore:rules     # live
+```
+
+**5. Garmin sync (optional)** — needs the Blaze plan (free at this scale):
+
+```bash
+firebase deploy --only functions
+```
+
+Users connect Garmin in-app (Goals → Garmin). If Garmin rate-limits logins from cloud IPs, `node functions/bootstrap.js` generates session tokens locally to paste into the app's Advanced option.
 
 ## Design notes
 
