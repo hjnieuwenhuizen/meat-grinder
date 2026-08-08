@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useGarmin } from '../hooks/useGarmin'
+import { useHealth } from '../hooks/useHealth'
 import { useMcp } from '../hooks/useMcp'
 import { CopyButton, Field, Panel } from './ui'
 import type { Macros, Settings } from '../types'
@@ -25,9 +26,56 @@ export default function Goals({ uid, settings, save }: {
       <GoalsForm settings={settings} save={save} />
       <div className="space-y-4">
         <GarminPanel uid={uid} />
+        <PhoneHealthPanel uid={uid} />
         <McpPanel uid={uid} />
       </div>
     </div>
+  )
+}
+
+// Samsung Health / Health Connect — only shown inside the Android app shell
+function PhoneHealthPanel({ uid }: { uid: string }) {
+  const h = useHealth(uid)
+  if (!h.native) return null
+
+  return (
+    <Panel className="p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <div className="font-medium">📱 Phone health sync</div>
+        {h.enabled && <span className="text-xs font-medium text-grind">Enabled ✓</span>}
+      </div>
+      <p className="mb-4 text-xs text-mist">
+        Reads your daily steps from Health Connect (Samsung Health, Google Fit, etc.) on this phone —
+        no watch account needed. Steps sync automatically while you use the app.
+      </p>
+      {h.enabled ? (
+        <div className="flex gap-2">
+          <button
+            type="button" disabled={h.busy}
+            onClick={h.sync}
+            className="flex-1 rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
+          >
+            {h.busy ? 'Syncing…' : 'Sync steps now'}
+          </button>
+          <button
+            type="button" disabled={h.busy}
+            onClick={h.disable}
+            className="rounded-full border border-edge px-4 py-2.5 text-sm font-medium text-mist hover:text-over"
+          >
+            Disable
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button" disabled={h.busy}
+          onClick={h.connect}
+          className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
+        >
+          {h.busy ? 'Connecting…' : 'Connect Health Connect'}
+        </button>
+      )}
+      {h.result && <p className="mt-3 text-xs text-mist">{h.result}</p>}
+    </Panel>
   )
 }
 
