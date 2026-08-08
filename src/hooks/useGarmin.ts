@@ -25,7 +25,7 @@ export function useGarmin(uid: string) {
     status,
     connect: (email: string, password: string) => call('garminConnect')({ email, password }),
     connectTokens: (tokens: unknown) => call('garminConnect')({ tokens }),
-    syncNow: () => call('garminSyncUser')({}),
+    syncNow: (full = false) => call('garminSyncUser')({ full }),
     disconnect: () => call('garminDisconnect')({}),
   }
 }

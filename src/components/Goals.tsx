@@ -201,7 +201,7 @@ function GarminPanel({ uid }: { uid: string }) {
             {status.lastSync ? `Last sync: ${new Date(status.lastSync).toLocaleString()} — ${status.lastResult ?? ''}` : 'First sync pending…'}
             {status.lastError && <span className="block text-over">Last error: {status.lastError}</span>}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button" disabled={busy}
               onClick={() => run(async () => {
@@ -212,6 +212,18 @@ function GarminPanel({ uid }: { uid: string }) {
               className="flex-1 rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
             >
               {busy ? 'Syncing…' : 'Sync now'}
+            </button>
+            <button
+              type="button" disabled={busy}
+              title="Backfill sleep, steps, heart rate and workouts for the last 30 days"
+              onClick={() => run(async () => {
+                const r = await syncNow(true)
+                setMsg({ ok: true, text: `Resynced 30 days: ${r.data.summary}` })
+                return r
+              })}
+              className="rounded-full border border-grind/50 px-4 py-2.5 text-sm font-semibold text-grind transition hover:bg-grind-soft disabled:opacity-40"
+            >
+              {busy ? '…' : 'Resync 30 days'}
             </button>
             <button
               type="button" disabled={busy}

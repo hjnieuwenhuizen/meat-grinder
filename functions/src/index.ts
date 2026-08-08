@@ -105,19 +105,20 @@ async function clientFor(uid: string): Promise<GarminConnect> {
   return client
 }
 
-async function syncUser(uid: string): Promise<string> {
+async function syncUser(uid: string, full = false): Promise<string> {
   const client = await clientFor(uid)
   const settings = (await db.doc(`users/${uid}/meta/settings`).get()).data() ?? {}
 
   const now = new Date()
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  const sleepKeys = [keyOf(yesterday), keyOf(now)]
-  const actKeys = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(now)
-    d.setDate(now.getDate() - i)
-    return keyOf(d)
-  })
+  const lastNDays = (n: number) =>
+    Array.from({ length: n }, (_, i) => {
+      const d = new Date(now)
+      d.setDate(now.getDate() - i)
+      return keyOf(d)
+    })
+  // normal runs cover the recent window; a full resync backfills a month
+  const sleepKeys = lastNDays(full ? 30 : 2)
+  const actKeys = lastNDays(full ? 30 : 7)
 
   const dayCache: Record<string, DayDoc & { _dirty: boolean }> = {}
   const loadDay = async (key: string) => {
@@ -176,8 +177,8 @@ async function syncUser(uid: string): Promise<string> {
     }
   }
 
-  // activities: last 30, keep the ones in the window, dedupe by garminId
-  const acts = (await client.getActivities(0, 30)) as GarminActivity[]
+  // activities: keep the ones in the window, dedupe by garminId
+  const acts = (await client.getActivities(0, full ? 100 : 30)) as GarminActivity[]
   for (const act of acts ?? []) {
     const start = act.startTimeLocal // "2026-08-08 17:23:00"
     if (!start) continue
@@ -350,12 +351,13 @@ export const garminConnect = onCall(
 )
 
 export const garminSyncUser = onCall(
-  { region: REGION, memory: '256MiB', timeoutSeconds: 300 },
+  { region: REGION, memory: '256MiB', timeoutSeconds: 540 },
   async (req) => {
     const uid = req.auth?.uid
     if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
+    const full = Boolean((req.data as { full?: boolean } | undefined)?.full)
     try {
-      return { ok: true, summary: await syncUser(uid) }
+      return { ok: true, summary: await syncUser(uid, full) }
     } catch (e) {
       if (e instanceof HttpsError) throw e
       throw friendly(e)
