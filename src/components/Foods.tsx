@@ -29,7 +29,7 @@ export default function Foods({ foods, addFood, updateFood, deleteFood }: FoodsA
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search foods…"
+          placeholder="Search library…"
           className="w-full max-w-xs rounded-full border border-edge bg-panel px-4 py-2 text-base outline-none transition focus:border-grind/60 sm:text-sm"
         />
         <div className="flex items-center gap-2">

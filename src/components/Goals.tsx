@@ -183,7 +183,7 @@ function GarminPanel({ uid }: { uid: string }) {
           {advanced && (
             <div className="space-y-2">
               <p className="text-[11px] text-mist">
-                If Garmin rate-limits the server, run <code className="text-bone">node functions/bootstrap.js</code> locally and paste the JSON here.
+                If Garmin rate-limits the server, run <code className="text-bone">node functions/bootstrap.js</code> locally (from the repo) and paste the JSON here.
               </p>
               <textarea
                 value={tokenJson}

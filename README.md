@@ -122,7 +122,7 @@ firebase deploy --only hosting,firestore:rules     # live
 firebase deploy --only functions
 ```
 
-Users connect Garmin in-app (Goals → Garmin). If Garmin rate-limits logins from cloud IPs, `node functions/bootstrap.js` generates session tokens locally to paste into the app's Advanced option.
+Users connect Garmin in-app (Settings → Garmin). If Garmin rate-limits logins from cloud IPs, `node functions/bootstrap.js` generates session tokens locally to paste into the app's Advanced option.
 
 ## Design notes
 

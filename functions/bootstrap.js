@@ -1,6 +1,6 @@
 // Fallback for when Garmin rate-limits logins from cloud IPs:
 // log in from YOUR machine, then paste the printed tokens into the app
-// (Goals → Garmin → Advanced → "Connect with tokens").
+// (Settings → Garmin → Advanced → "Connect with tokens").
 //
 // Usage: node bootstrap.js
 const readline = require('readline')
@@ -33,7 +33,7 @@ const ask = (q, hidden = false) =>
   const t = client.exportToken()
 
   console.log('\nLogin OK. Copy the JSON below and paste it into the app:')
-  console.log('Goals → Garmin → Advanced → Connect with tokens\n')
+  console.log('Settings → Garmin → Advanced → Connect with tokens\n')
   console.log(JSON.stringify({ oauth1: t.oauth1, oauth2: t.oauth2 }))
 })().catch((e) => {
   console.error('Failed:', e.message)

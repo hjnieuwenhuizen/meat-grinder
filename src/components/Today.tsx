@@ -429,7 +429,7 @@ function Rescue({ foods, pGap, kcalLeft, onAdd, onClose }: {
           </button>
         ))}
         {options.length === 0 && (
-          <p className="py-4 text-center text-sm text-mist">No food in your library can close this gap. Add lean staples in Foods.</p>
+          <p className="py-4 text-center text-sm text-mist">No food in your library can close this gap. Add lean staples in Library.</p>
         )}
       </div>
     </Modal>
@@ -834,7 +834,7 @@ function FromLibrary({ foods, bumpUsed, totals, goal, onAdd, onClose }: Omit<Add
         ))}
         {filtered.length === 0 && (
           <p className="py-6 text-center text-sm text-mist">
-            {foods.length === 0 ? 'No foods yet — add some in the Foods tab, or use Quick add.' : 'No match.'}
+            {foods.length === 0 ? 'Nothing in your library yet — add staples in the Library tab, or use Quick add.' : 'No match.'}
           </p>
         )}
       </div>

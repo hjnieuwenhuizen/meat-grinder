@@ -8,12 +8,12 @@ import Reports from './components/Reports'
 import Foods from './components/Foods'
 import Goals from './components/Goals'
 
-const TABS = ['Today', 'Reports', 'Foods', 'Goals'] as const
+const TABS = ['Diary', 'Reports', 'Library', 'Settings'] as const
 type Tab = (typeof TABS)[number]
 
 export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
-  const [tab, setTab] = useState<Tab>('Today')
+  const [tab, setTab] = useState<Tab>('Diary')
 
   useEffect(() => onAuthStateChanged(auth, setUser), [])
 
@@ -57,10 +57,10 @@ function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) =
         </div>
       </header>
 
-      {tab === 'Today' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} />}
+      {tab === 'Diary' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} />}
       {tab === 'Reports' && <Reports uid={user.uid} settings={settings} />}
-      {tab === 'Foods' && <Foods {...foodsApi} />}
-      {tab === 'Goals' && <Goals uid={user.uid} settings={settings} save={save} />}
+      {tab === 'Library' && <Foods {...foodsApi} />}
+      {tab === 'Settings' && <Goals uid={user.uid} settings={settings} save={save} />}
 
       <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-edge bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden">
         {TABS.map((t) => (
