@@ -1,0 +1,79 @@
+import { useEffect, useState } from 'react'
+import { onAuthStateChanged } from 'firebase/auth'
+import { auth, logOut } from './lib/firebase'
+import { useSettings, useFoods } from './hooks/useData'
+import SignIn from './components/SignIn'
+import Today from './components/Today'
+import Reports from './components/Reports'
+import Foods from './components/Foods'
+import Goals from './components/Goals'
+
+const TABS = ['Today', 'Reports', 'Foods', 'Goals']
+
+export default function App() {
+  const [user, setUser] = useState(undefined)
+  const [tab, setTab] = useState('Today')
+
+  useEffect(() => onAuthStateChanged(auth, setUser), [])
+
+  if (user === undefined) return null
+  if (!user) return <SignIn />
+
+  return <Shell user={user} tab={tab} setTab={setTab} />
+}
+
+function Shell({ user, tab, setTab }) {
+  const { settings, save } = useSettings(user.uid)
+  const foodsApi = useFoods(user.uid)
+
+  if (!settings) {
+    return <div className="flex min-h-dvh items-center justify-center text-mist">Loading…</div>
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 pb-28 pt-[env(safe-area-inset-top)] sm:pb-8">
+      <header className="flex items-center justify-between py-5">
+        <h1 className="text-xl font-bold uppercase tracking-tight">
+          Meat<span className="text-grind">Grinder</span>
+        </h1>
+        <div className="flex items-center gap-4">
+          <nav className="hidden gap-1 rounded-full border border-edge bg-panel p-1 sm:flex">
+            {TABS.map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                  tab === t ? 'bg-grind text-ink' : 'text-mist hover:text-bone'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </nav>
+          <button onClick={logOut} title={user.email} className="text-xs text-mist hover:text-bone">
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      {tab === 'Today' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} />}
+      {tab === 'Reports' && <Reports uid={user.uid} settings={settings} />}
+      {tab === 'Foods' && <Foods {...foodsApi} />}
+      {tab === 'Goals' && <Goals uid={user.uid} settings={settings} save={save} />}
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-edge bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`flex-1 py-3.5 text-xs font-semibold uppercase tracking-wider transition ${
+              tab === t ? 'text-grind' : 'text-mist'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </nav>
+    </div>
+  )
+}
