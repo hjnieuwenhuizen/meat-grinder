@@ -57,6 +57,13 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
     ...(() => {
       const extra: string[] = []
       if (day.sleep) extra.push(`Sleep last night: ${day.sleep}h`)
+      const g = day.garmin
+      if (g?.steps || g?.restingHr) {
+        extra.push(`Garmin: ${[
+          g.steps ? `${g.steps.toLocaleString()} steps` : null,
+          g.restingHr ? `resting HR ${g.restingHr} bpm` : null,
+        ].filter(Boolean).join(', ')}`)
+      }
       const booze = day.entries.filter((e) => e.alcohol)
       const shame = booze.reduce((s, e) => s + e.kcal, 0)
       const grams = booze.reduce((s, e) => s + (e.alcoholG || 0), 0)
@@ -87,12 +94,16 @@ export function rangeReport(
       ? ` | trained: ${day.workouts.map((w) => `${workoutTitle(w)}${workoutDetails(w) ? ` (${workoutDetails(w)})` : ''}`).join(', ')}`
       : ''
     const sleep = day.sleep ? ` | sleep ${day.sleep}h` : ''
+    const wellness = [
+      day.garmin?.steps ? ` | steps ${day.garmin.steps}` : '',
+      day.garmin?.restingHr ? ` | resting HR ${day.garmin.restingHr}` : '',
+    ].join('')
     const drinks = day.entries.filter((e) => e.alcohol)
     const shame = drinks.reduce((s, e) => s + e.kcal, 0)
     const grams = drinks.reduce((s, e) => s + (e.alcoholG || 0), 0)
     const booze = shame > 0 ? ` | alcohol ${Math.round(shame)} kcal${grams > 0 ? ` (${Math.round(grams)}g)` : ''}` : ''
     return [
-      `- ${fmtDay(k)} (${k})${tag}: ${line(t)} (goal ${Math.round(goal.kcal)} kcal)${trained}${sleep}${booze}`,
+      `- ${fmtDay(k)} (${k})${tag}: ${line(t)} (goal ${Math.round(goal.kcal)} kcal)${trained}${sleep}${wellness}${booze}`,
       ...day.entries.map((e) => `  - ${e.name}${fmtAmount(e) ? ` (${fmtAmount(e)})` : ''}: ${line(e)}`),
     ]
   })

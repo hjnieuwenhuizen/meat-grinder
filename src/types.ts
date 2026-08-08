@@ -2,7 +2,10 @@
 
 export type Unit = 'g' | 'ml' | 'scoop' | 'unit'
 export type MealId = 'breakfast' | 'snack1' | 'lunch' | 'snack2' | 'supper' | 'snack3'
-export type WorkoutTypeId = 'push' | 'legs' | 'pull' | 'run' | 'other'
+export type WorkoutTypeId =
+  | 'push' | 'legs' | 'pull' | 'strength'
+  | 'run' | 'walk' | 'ride' | 'swim' | 'hike' | 'stairs' | 'cardio'
+  | 'other'
 
 export interface Macros {
   kcal: number
@@ -48,6 +51,8 @@ export interface Entry extends Macros {
 export interface Workout {
   id: string
   type: WorkoutTypeId
+  /** Garmin activity name, e.g. "Stair Stepper" — shown as the title when present */
+  name?: string | null
   duration?: number | null
   kcal?: number | null
   distance?: number | null
@@ -57,11 +62,18 @@ export interface Workout {
   garminId?: number
 }
 
+/** daily wellness pulled from Garmin */
+export interface GarminDay {
+  steps?: number | null
+  restingHr?: number | null
+}
+
 export interface DayDoc {
   training: boolean
   entries: Entry[]
   workouts: Workout[]
   sleep?: number | null
+  garmin?: GarminDay
 }
 
 export interface GarminStatus {

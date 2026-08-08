@@ -3,7 +3,7 @@ import { useDay, totalsOf, goalFor, type FoodsApi } from '../hooks/useData'
 import { todayKey, addDays, fmtLong } from '../lib/dates'
 import { isPer100, unitOf, amountOf, fmtAmount, basisLabel, scaleFor } from '../lib/units'
 import { MEALS, defaultMealNow } from '../lib/meals'
-import { WORKOUT_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
+import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
@@ -99,6 +99,16 @@ export default function Today({ uid, settings, foods, addFood, updateFood }: Tod
           />
           <span className="text-xs text-mist">h sleep</span>
         </label>
+        {day.garmin?.steps ? (
+          <span className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist" title="Steps (Garmin)">
+            👟 <b className="font-medium text-bone">{day.garmin.steps.toLocaleString()}</b> steps
+          </span>
+        ) : null}
+        {day.garmin?.restingHr ? (
+          <span className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist" title="Resting heart rate (Garmin)">
+            ❤️ <b className="font-medium text-bone">{day.garmin.restingHr}</b> bpm rest
+          </span>
+        ) : null}
       </div>
 
       {/* calories hero */}
@@ -452,14 +462,17 @@ function WorkoutModal({ initial, onSave, onClose }: {
   const set = (k: 'duration' | 'kcal' | 'distance') =>
     (e: React.ChangeEvent<HTMLInputElement>) => setW({ ...w, [k]: e.target.value })
 
+  const hasDistance = DISTANCE_TYPES.includes(w.type)
+
   const submit = () => {
     onSave({
       id: initial?.id ?? crypto.randomUUID(),
       ...(initial?.garminId ? { garminId: initial.garminId } : {}),
+      ...(initial?.name ? { name: initial.name } : {}),
       type: w.type,
       duration: Number(w.duration) || null,
       kcal: Number(w.kcal) || null,
-      distance: w.type === 'run' ? Number(w.distance) || null : null,
+      distance: hasDistance ? Number(w.distance) || null : null,
       when: w.when,
       meal: w.meal,
     })
@@ -487,10 +500,10 @@ function WorkoutModal({ initial, onSave, onClose }: {
             </button>
           ))}
         </div>
-        <div className={`grid gap-3 ${w.type === 'run' ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <div className={`grid gap-3 ${hasDistance ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <Field label="Minutes" type="number" inputMode="decimal" value={w.duration} onChange={set('duration')} placeholder="45" />
           <Field label="Kcal burned" type="number" inputMode="decimal" value={w.kcal} onChange={set('kcal')} placeholder="320" />
-          {w.type === 'run' && (
+          {hasDistance && (
             <Field label="Distance (km)" type="number" inputMode="decimal" step="0.1" value={w.distance} onChange={set('distance')} placeholder="5.2" />
           )}
         </div>

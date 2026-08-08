@@ -47,6 +47,12 @@ input[type="number"] {
   appearance: textfield;
 }
 
-button {
+button,
+[role="button"],
+label:has(input[type="checkbox"]) {
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
 }

@@ -16,12 +16,16 @@ const db = getFirestore()
 const REGION = 'europe-west1'
 
 type MealId = 'breakfast' | 'snack1' | 'lunch' | 'snack2' | 'supper' | 'snack3'
-type WorkoutTypeId = 'push' | 'legs' | 'pull' | 'run' | 'other'
+type WorkoutTypeId =
+  | 'push' | 'legs' | 'pull' | 'strength'
+  | 'run' | 'walk' | 'ride' | 'swim' | 'hike' | 'stairs' | 'cardio'
+  | 'other'
 
 interface Workout {
   id: string
   garminId?: number
   type: WorkoutTypeId
+  name: string | null
   duration: number | null
   kcal: number | null
   distance: number | null
@@ -34,6 +38,7 @@ interface DayDoc {
   entries: unknown[]
   workouts: Workout[]
   sleep?: number | null
+  garmin?: { steps?: number | null; restingHr?: number | null }
 }
 
 interface GarminActivity {
@@ -74,12 +79,21 @@ const slotFor = (hour: number): MealId => {
 const mapType = (act: GarminActivity): WorkoutTypeId => {
   const key = act.activityType?.typeKey ?? ''
   const name = (act.activityName ?? '').toLowerCase()
-  if (key.includes('running') || key.includes('treadmill')) return 'run'
   if (/push/.test(name)) return 'push'
   if (/pull/.test(name)) return 'pull'
   if (/leg/.test(name)) return 'legs'
+  if (key.includes('running') || key.includes('treadmill')) return 'run'
+  if (key.includes('strength')) return 'strength'
+  if (key.includes('cycling') || key.includes('biking') || key.includes('ride')) return 'ride'
+  if (key.includes('hiking')) return 'hike'
+  if (key.includes('walking')) return 'walk'
+  if (key.includes('swim')) return 'swim'
+  if (key.includes('stair')) return 'stairs'
+  if (key.includes('cardio') || key.includes('elliptical') || key.includes('hiit') || key.includes('fitness_equipment')) return 'cardio'
   return 'other'
 }
+
+const DISTANCE_TYPES: WorkoutTypeId[] = ['run', 'walk', 'ride', 'swim', 'hike']
 
 async function clientFor(uid: string): Promise<GarminConnect> {
   const snap = await tokensRef(uid).get()
@@ -137,6 +151,31 @@ async function syncUser(uid: string): Promise<string> {
     }
   }
 
+  // daily wellness: steps + resting heart rate for yesterday/today
+  for (const key of sleepKeys) {
+    const date = new Date(`${key}T12:00:00`)
+    const g: { steps?: number | null; restingHr?: number | null } = {}
+    try {
+      const steps = await client.getSteps(date)
+      if (steps && steps > 0) g.steps = steps
+    } catch (e) {
+      logger.info(`${uid} no steps for ${key}: ${(e as Error).message}`)
+    }
+    try {
+      const hr = await client.getHeartRate(date)
+      if (hr?.restingHeartRate) g.restingHr = hr.restingHeartRate
+    } catch (e) {
+      logger.info(`${uid} no heart rate for ${key}: ${(e as Error).message}`)
+    }
+    if (g.steps == null && g.restingHr == null) continue
+    const day = await loadDay(key)
+    const merged = { ...(day.garmin ?? {}), ...g }
+    if (JSON.stringify(merged) !== JSON.stringify(day.garmin ?? {})) {
+      day.garmin = merged
+      day._dirty = true
+    }
+  }
+
   // activities: last 30, keep the ones in the window, dedupe by garminId
   const acts = (await client.getActivities(0, 30)) as GarminActivity[]
   for (const act of acts ?? []) {
@@ -154,9 +193,11 @@ async function syncUser(uid: string): Promise<string> {
       id: crypto.randomUUID(),
       garminId: act.activityId,
       type,
+      // keep Garmin's own label as metadata — the app shows it as the title
+      name: act.activityName?.trim() || null,
       duration: act.duration ? Math.round(act.duration / 60) : null,
       kcal: act.calories ? Math.round(act.calories) : null,
-      distance: type === 'run' && act.distance ? Math.round((act.distance / 1000) * 10) / 10 : null,
+      distance: DISTANCE_TYPES.includes(type) && act.distance ? Math.round((act.distance / 1000) * 10) / 10 : null,
       when: 'before',
       meal: slotFor(hour),
     })
