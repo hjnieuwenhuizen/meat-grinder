@@ -385,21 +385,24 @@ const FOOD_INPUT_PROPS = {
   alcoholG: { type: ['number', 'null'], description: 'grams of pure alcohol per basis' },
 }
 
-const openApiSchema = (host: string) => ({
+const openApiSchema = (host: string, pathKey: string | null = null) => ({
   openapi: '3.1.0',
   info: {
     title: 'Meat Grinder diary',
     description:
-      "Read-only access to the user's nutrition diary. Protein is a hard daily target; carbs/fat are flexible against the calorie budget; exercise burn is never added back to the budget.",
+      "Access to the user's nutrition diary. Protein is a hard daily target; carbs/fat are flexible against the calorie budget; exercise burn is never added back to the budget.",
     version: '1.0.0',
   },
-  servers: [{ url: `https://${host}/api` }],
-  security: [{ ApiKeyAuth: [] }],
+  // keyed variant: the key rides in the base URL — no auth headers involved
+  servers: [{ url: pathKey ? `https://${host}/api/k/${pathKey}` : `https://${host}/api` }],
+  ...(pathKey ? {} : { security: [{ ApiKeyAuth: [] }] }),
   components: {
     schemas: {},
-    securitySchemes: {
-      ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-API-Key' },
-    },
+    ...(pathKey ? {} : {
+      securitySchemes: {
+        ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-API-Key' },
+      },
+    }),
   },
   paths: {
     '/goals': {
@@ -582,23 +585,34 @@ const openApiSchema = (host: string) => ({
 })
 
 export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds: 60 }, async (req, res) => {
-  const path = (req.path.startsWith('/api') ? req.path.slice(4) : req.path) || '/'
+  let path = (req.path.startsWith('/api') ? req.path.slice(4) : req.path) || '/'
 
   if (!['GET', 'POST', 'PATCH'].includes(req.method)) {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
-  // schema is public — it contains no data or secrets
+  // keyed variant: /api/k/<key>/… carries the key in the URL so clients that
+  // mangle auth headers (GPT Actions) can use Authentication: None
+  let pathKey: string | null = null
+  const keyed = path.match(/^\/k\/([a-f0-9]{48})(\/.*)?$/)
+  if (keyed) {
+    pathKey = keyed[1]
+    path = keyed[2] || '/'
+  }
+
+  // behind the hosting rewrite the original domain arrives via x-forwarded-host
+  const host = req.get('x-forwarded-host')?.split(',')[0].trim() || req.get('host') || 'localhost'
+
+  // schema is public — it contains no data or secrets (keyed variant embeds
+  // the caller's own key in the server URL and needs no auth config)
   if (req.method === 'GET' && path === '/openapi.json') {
-    // behind the hosting rewrite the original domain arrives via x-forwarded-host
-    const host = req.get('x-forwarded-host')?.split(',')[0].trim() || req.get('host') || 'localhost'
-    res.json(openApiSchema(host))
+    res.json(openApiSchema(host, pathKey))
     return
   }
 
   const headerKey = req.get('x-api-key') ?? req.get('authorization')?.replace(/^(Bearer|Basic)\s+/i, '')
-  const uid = await uidForKey(headerKey?.trim())
+  const uid = await uidForKey(pathKey ?? headerKey?.trim())
   if (!uid) {
     // diagnostic: log the shape of what arrived, never the value itself
     logger.info(

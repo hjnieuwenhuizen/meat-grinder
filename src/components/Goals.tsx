@@ -76,15 +76,15 @@ function McpPanel({ uid }: { uid: string }) {
             </div>
           </div>
           <div>
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-mist">API key (custom GPT Actions — X-API-Key header)</div>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-mist">Custom GPT schema URL (Actions — set Authentication: None)</div>
             <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-lg border border-edge bg-ink px-3 py-2 text-xs text-bone">{config!.key}</code>
+              <code className="min-w-0 flex-1 truncate rounded-lg border border-edge bg-ink px-3 py-2 text-xs text-bone">{`${location.origin}/api/k/${config!.key}/openapi.json`}</code>
               <button
                 type="button"
-                onClick={() => copy('key', config!.key)}
+                onClick={() => copy('key', `${location.origin}/api/k/${config!.key}/openapi.json`)}
                 className="shrink-0 rounded-full border border-grind/50 px-4 py-2 text-sm font-semibold text-grind transition hover:bg-grind-soft"
               >
-                {copied === 'key' ? 'Copied ✓' : 'Copy key'}
+                {copied === 'key' ? 'Copied ✓' : 'Copy'}
               </button>
             </div>
           </div>
@@ -92,7 +92,7 @@ function McpPanel({ uid }: { uid: string }) {
             <p>Works with any MCP-capable AI assistant:</p>
             <p><b className="font-medium text-bone">Claude</b> — Settings → Connectors → Add custom connector → paste this URL.</p>
             <p><b className="font-medium text-bone">ChatGPT</b> — Settings → Apps &amp; Connectors → Advanced → enable Developer mode → Create connector → paste this URL (Plus/Pro).</p>
-            <p><b className="font-medium text-bone">Custom GPT (Actions)</b> — edit your GPT → Add Action → Import from URL: <code className="text-bone">{location.origin}/api/openapi.json</code> → Authentication: API Key, header <code className="text-bone">X-API-Key</code>, paste the key from this URL (the part after /mcp/).</p>
+            <p><b className="font-medium text-bone">Custom GPT (Actions)</b> — edit your GPT → Add Action → Import from URL using the schema URL above → Authentication: <b className="font-medium text-bone">None</b> (your key is inside the URL).</p>
             <p><b className="font-medium text-bone">Claude Code / other tools</b> — add it as a remote MCP server URL.</p>
             <p>Then ask things like "how's my protein trending this month?"</p>
           </div>
