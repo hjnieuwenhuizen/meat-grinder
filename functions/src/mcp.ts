@@ -260,6 +260,44 @@ export const mcp = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
 
 /* ---------- REST + OpenAPI for custom GPT Actions ---------- */
 
+const MACROS_SCHEMA = {
+  type: 'object',
+  properties: {
+    kcal: { type: 'number' },
+    protein: { type: 'number' },
+    carbs: { type: 'number' },
+    fat: { type: 'number' },
+  },
+}
+
+const WORKOUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    type: { type: 'string' },
+    name: { type: ['string', 'null'] },
+    minutes: { type: ['number', 'null'] },
+    kcalBurned: { type: ['number', 'null'] },
+    distanceKm: { type: ['number', 'null'] },
+    slot: { type: ['string', 'null'] },
+    when: { type: ['string', 'null'] },
+  },
+}
+
+const DAY_SUMMARY_PROPS = {
+  date: { type: 'string' },
+  trainingDay: { type: 'boolean' },
+  goal: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+  totals: MACROS_SCHEMA,
+  sleepHours: { type: ['number', 'null'] },
+  steps: { type: ['number', 'null'] },
+  restingHeartRate: { type: ['number', 'null'] },
+  alcohol: {
+    type: ['object', 'null'],
+    properties: { kcal: { type: 'number' }, pureAlcoholGrams: { type: 'number' } },
+  },
+  workouts: { type: 'array', items: WORKOUT_SCHEMA },
+}
+
 const openApiSchema = (host: string) => ({
   openapi: '3.1.0',
   info: {
@@ -281,7 +319,23 @@ const openApiSchema = (host: string) => ({
       get: {
         operationId: 'getGoals',
         summary: 'Daily macro goals (rest + training day)',
-        responses: { '200': { description: 'Goals', content: { 'application/json': { schema: { type: 'object' } } } } },
+        responses: {
+          '200': {
+            description: 'Goals',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    trainingEnabled: { type: 'boolean' },
+                    rest: MACROS_SCHEMA,
+                    training: MACROS_SCHEMA,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     },
     '/day': {
@@ -291,7 +345,35 @@ const openApiSchema = (host: string) => ({
         parameters: [
           { name: 'date', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
         ],
-        responses: { '200': { description: 'Day diary', content: { 'application/json': { schema: { type: 'object' } } } } },
+        responses: {
+          '200': {
+            description: 'Day diary',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ...DAY_SUMMARY_PROPS,
+                    entries: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          name: { type: 'string' },
+                          amount: { type: ['number', 'null'] },
+                          unit: { type: ['string', 'null'] },
+                          mealSlot: { type: ['string', 'null'] },
+                          alcohol: { type: 'boolean' },
+                          ...MACROS_SCHEMA.properties,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     },
     '/range': {
@@ -302,7 +384,23 @@ const openApiSchema = (host: string) => ({
           { name: 'start', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
           { name: 'end', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD inclusive' },
         ],
-        responses: { '200': { description: 'Range summary', content: { 'application/json': { schema: { type: 'object' } } } } },
+        responses: {
+          '200': {
+            description: 'Range summary',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    days: { type: 'array', items: { type: 'object', properties: DAY_SUMMARY_PROPS } },
+                    daysLogged: { type: 'number' },
+                    averagesOverLoggedDays: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     },
     '/foods': {
@@ -312,7 +410,29 @@ const openApiSchema = (host: string) => ({
         parameters: [
           { name: 'query', in: 'query', required: false, schema: { type: 'string' }, description: 'Substring of food name' },
         ],
-        responses: { '200': { description: 'Foods', content: { 'application/json': { schema: { type: 'array', items: { type: 'object' } } } } } },
+        responses: {
+          '200': {
+            description: 'Foods',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      unit: { type: ['string', 'null'] },
+                      serving: { type: ['number', 'null'] },
+                      alcohol: { type: ['boolean', 'null'] },
+                      alcoholG: { type: ['number', 'null'] },
+                      ...MACROS_SCHEMA.properties,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     },
   },
