@@ -11,11 +11,25 @@ import Goals from './components/Goals'
 const TABS = ['Diary', 'Reports', 'Library', 'Settings'] as const
 type Tab = (typeof TABS)[number]
 
+// hash routing (#diary, #reports, …) so refresh and back/forward keep the tab
+const tabFromHash = (): Tab =>
+  TABS.find((t) => t.toLowerCase() === location.hash.replace('#', '').toLowerCase()) ?? 'Diary'
+
 export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
-  const [tab, setTab] = useState<Tab>('Diary')
+  const [tab, setTabState] = useState<Tab>(tabFromHash)
 
   useEffect(() => onAuthStateChanged(auth, setUser), [])
+
+  useEffect(() => {
+    const onHash = () => setTabState(tabFromHash())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  const setTab = (t: Tab) => {
+    location.hash = t.toLowerCase()
+  }
 
   if (user === undefined) return null
   if (!user) return <SignIn />

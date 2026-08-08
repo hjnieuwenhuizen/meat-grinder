@@ -19,6 +19,15 @@ export default function Goals({ uid, settings, save }: {
   settings: Settings
   save: (s: Settings) => void
 }) {
+  return (
+    <div className="max-w-lg space-y-4">
+      <GoalsForm settings={settings} save={save} />
+      <GarminPanel uid={uid} />
+    </div>
+  )
+}
+
+function GoalsForm({ settings, save }: { settings: Settings; save: (s: Settings) => void }) {
   const [form, setForm] = useState<{ trainingEnabled: boolean; rest: GoalDraft; training: GoalDraft }>({
     trainingEnabled: settings.trainingEnabled,
     rest: { ...settings.rest },
@@ -50,7 +59,7 @@ export default function Goals({ uid, settings, save }: {
   }
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); submit() }} className="max-w-lg space-y-4">
+    <form onSubmit={(e) => { e.preventDefault(); submit() }} className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Daily goals</h2>
         <CopyButton text={copyText} />
@@ -90,18 +99,16 @@ export default function Goals({ uid, settings, save }: {
       >
         {saved ? 'Saved ✓' : 'Save goals'}
       </button>
-
-      <GarminPanel uid={uid} />
     </form>
   )
 }
 
 function GarminPanel({ uid }: { uid: string }) {
   const { status, connect, connectTokens, syncNow, disconnect } = useGarmin(uid)
+  const [method, setMethod] = useState<'password' | 'token'>('password')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tokenJson, setTokenJson] = useState('')
-  const [advanced, setAdvanced] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -175,35 +182,70 @@ function GarminPanel({ uid }: { uid: string }) {
         </div>
       ) : (
         <div className="space-y-3">
-          <Field label="Garmin email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <Field label="Garmin password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <p className="text-[11px] leading-snug text-mist">
-            Used to sign in to Garmin once. If Garmin is rate-limiting, your login is kept in your private
-            account data and retried automatically — it's deleted the moment the connection succeeds; only
-            session tokens are kept after that.
-          </p>
-          <button
-            type="button" disabled={busy || !email || !password}
-            onClick={() => run(async () => {
-              const r = await connect(email, password)
-              setPassword('')
-              return r
-            })}
-            className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
-          >
-            {busy ? 'Connecting…' : 'Connect Garmin'}
-          </button>
+          {/* either/or: password login OR pasted token */}
+          <div className="flex gap-1 rounded-full border border-edge bg-ink p-1">
+            {([['password', 'Email & password'], ['token', 'I have a token']] as const).map(([m, label]) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => { setMethod(m); setMsg(null) }}
+                className={`flex-1 rounded-full py-1.5 text-sm font-medium transition ${
+                  method === m ? 'bg-raise text-bone' : 'text-mist'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
-          <button type="button" onClick={() => setAdvanced(!advanced)} className="text-xs text-mist underline-offset-2 hover:text-bone hover:underline">
-            Advanced: connect with tokens
-          </button>
-          {advanced && (
-            <div className="space-y-2">
+          {method === 'password' ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (busy || !email || !password) return
+                run(async () => {
+                  const r = await connect(email, password)
+                  setPassword('')
+                  return r
+                })
+              }}
+              className="space-y-3"
+            >
+              <Field label="Garmin email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Field label="Garmin password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <p className="text-[11px] leading-snug text-mist">
+                Used to sign in to Garmin once. If Garmin is rate-limiting, your login is kept in your private
+                account data and retried automatically — it's deleted the moment the connection succeeds; only
+                session tokens are kept after that.
+              </p>
+              <button
+                type="submit" disabled={busy || !email || !password}
+                className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
+              >
+                {busy ? 'Connecting…' : 'Connect Garmin'}
+              </button>
+            </form>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (busy || !tokenJson.trim()) return
+                let parsed: unknown
+                try {
+                  parsed = JSON.parse(tokenJson)
+                } catch {
+                  setMsg({ ok: false, text: "That doesn't look like token JSON — paste the exact line the script printed." })
+                  return
+                }
+                run(() => connectTokens(parsed))
+              }}
+              className="space-y-2"
+            >
               <div className="space-y-1 text-[11px] leading-snug text-mist">
-                <p>Garmin blocks our server sometimes, but never your own computer. On any PC with <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-grind underline underline-offset-2">Node.js</a>:</p>
+                <p>Garmin sometimes blocks logins from servers, but never from your own computer. On any PC with <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-grind underline underline-offset-2">Node.js</a> installed:</p>
                 <p>1. <a href="/garmin-token.mjs" download className="text-grind underline underline-offset-2">Download the token script</a> into a new folder.</p>
                 <p>2. In a terminal in that folder: <code className="text-bone">npm i garmin-connect</code> then <code className="text-bone">node garmin-token.mjs</code></p>
-                <p>3. It prints a line of JSON — paste it here:</p>
+                <p>3. It asks for your Garmin login (stays on your PC) and prints a line of JSON — paste it here:</p>
               </div>
               <textarea
                 value={tokenJson}
@@ -213,13 +255,12 @@ function GarminPanel({ uid }: { uid: string }) {
                 className="w-full rounded-lg border border-edge bg-ink px-3 py-2 font-mono text-xs text-bone outline-none focus:border-grind/60"
               />
               <button
-                type="button" disabled={busy || !tokenJson.trim()}
-                onClick={() => run(() => connectTokens(JSON.parse(tokenJson)))}
-                className="w-full rounded-full border border-grind/50 py-2 text-sm font-semibold text-grind transition hover:bg-grind-soft disabled:opacity-40"
+                type="submit" disabled={busy || !tokenJson.trim()}
+                className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
               >
-                Connect with tokens
+                {busy ? 'Connecting…' : 'Connect with token'}
               </button>
-            </div>
+            </form>
           )}
         </div>
       )}
