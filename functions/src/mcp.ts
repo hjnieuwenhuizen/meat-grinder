@@ -271,6 +271,7 @@ const openApiSchema = (host: string) => ({
   servers: [{ url: `https://${host}/api` }],
   security: [{ ApiKeyAuth: [] }],
   components: {
+    schemas: {},
     securitySchemes: {
       ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-API-Key' },
     },
@@ -280,7 +281,7 @@ const openApiSchema = (host: string) => ({
       get: {
         operationId: 'getGoals',
         summary: 'Daily macro goals (rest + training day)',
-        responses: { '200': { description: 'Goals' } },
+        responses: { '200': { description: 'Goals', content: { 'application/json': { schema: { type: 'object' } } } } },
       },
     },
     '/day': {
@@ -290,7 +291,7 @@ const openApiSchema = (host: string) => ({
         parameters: [
           { name: 'date', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
         ],
-        responses: { '200': { description: 'Day diary' } },
+        responses: { '200': { description: 'Day diary', content: { 'application/json': { schema: { type: 'object' } } } } },
       },
     },
     '/range': {
@@ -301,7 +302,7 @@ const openApiSchema = (host: string) => ({
           { name: 'start', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
           { name: 'end', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD inclusive' },
         ],
-        responses: { '200': { description: 'Range summary' } },
+        responses: { '200': { description: 'Range summary', content: { 'application/json': { schema: { type: 'object' } } } } },
       },
     },
     '/foods': {
@@ -311,7 +312,7 @@ const openApiSchema = (host: string) => ({
         parameters: [
           { name: 'query', in: 'query', required: false, schema: { type: 'string' }, description: 'Substring of food name' },
         ],
-        responses: { '200': { description: 'Foods' } },
+        responses: { '200': { description: 'Foods', content: { 'application/json': { schema: { type: 'array', items: { type: 'object' } } } } } },
       },
     },
   },
