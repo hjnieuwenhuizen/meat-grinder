@@ -160,9 +160,55 @@ const foodsPayload = async (uid: string, query: string) => {
   const snap = await db.collection(`users/${uid}/foods`).orderBy('name').get()
   const q = query.toLowerCase()
   return snap.docs
-    .map((d) => d.data())
-    .filter((f) => String(f.name ?? '').toLowerCase().includes(q))
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((f) => String((f as { name?: unknown }).name ?? '').toLowerCase().includes(q))
     .slice(0, 30)
+}
+
+/* ---------- food writes (add + edit the library) ---------- */
+
+const UNITS = ['g', 'ml', 'scoop', 'unit']
+
+// whitelist + coerce; `partial` skips fields that weren't provided
+const sanitizeFood = (input: Record<string, unknown>, partial = false) => {
+  const out: Record<string, unknown> = {}
+  const has = (k: string) => input[k] !== undefined
+  if (has('name')) out.name = String(input.name).trim().slice(0, 100)
+  if (has('unit')) out.unit = UNITS.includes(String(input.unit)) ? String(input.unit) : 'g'
+  for (const k of ['kcal', 'protein', 'carbs', 'fat'] as const) {
+    if (has(k)) out[k] = Math.max(0, Number(input[k]) || 0)
+  }
+  if (has('serving')) out.serving = Number(input.serving) > 0 ? Number(input.serving) : null
+  if (has('alcohol')) out.alcohol = Boolean(input.alcohol)
+  if (has('alcoholG')) out.alcoholG = Number(input.alcoholG) > 0 ? Number(input.alcoholG) : null
+  if (!partial) {
+    if (!out.name) throw new Error('name is required')
+    if (out.kcal === undefined) throw new Error('kcal is required')
+    out.unit = out.unit ?? 'g'
+    out.protein = out.protein ?? 0
+    out.carbs = out.carbs ?? 0
+    out.fat = out.fat ?? 0
+    out.serving = out.serving ?? null
+    out.alcohol = out.alcohol ?? false
+    out.alcoholG = out.alcoholG ?? null
+  }
+  return out
+}
+
+const foodCreate = async (uid: string, input: Record<string, unknown>) => {
+  const food = sanitizeFood(input)
+  const ref = db.collection(`users/${uid}/foods`).doc()
+  await ref.set(food)
+  return { ok: true, id: ref.id, food }
+}
+
+const foodUpdate = async (uid: string, id: string, input: Record<string, unknown>) => {
+  const ref = db.doc(`users/${uid}/foods/${id}`)
+  if (!(await ref.get()).exists) throw new Error(`No food with id ${id}`)
+  const changes = sanitizeFood(input, true)
+  if (!Object.keys(changes).length) throw new Error('No valid fields to update')
+  await ref.update(changes)
+  return { ok: true, id, changes }
 }
 
 const uidForKey = async (key: string | undefined | null): Promise<string | null> => {
@@ -208,10 +254,39 @@ function buildServer(uid: string): McpServer {
   server.registerTool(
     'search_foods',
     {
-      description: "Search the user's personal food/drink library (macros per 100g/ml or per scoop/unit).",
+      description: "Search the user's personal food/drink library (macros per 100g/ml or per scoop/unit). Returns ids usable with update_food.",
       inputSchema: { query: z.string().describe('Case-insensitive substring of the food name; empty returns everything (max 30)') },
     },
     async ({ query }) => text(await foodsPayload(uid, query)),
+  )
+
+  const foodFields = {
+    unit: z.enum(['g', 'ml', 'scoop', 'unit']).optional().describe('g/ml → macros per 100; scoop/unit → macros per 1'),
+    kcal: z.number().min(0).optional(),
+    protein: z.number().min(0).optional().describe('grams'),
+    carbs: z.number().min(0).optional().describe('grams'),
+    fat: z.number().min(0).optional().describe('grams'),
+    serving: z.number().positive().optional().describe('default portion in g/ml (per-100 foods only)'),
+    alcohol: z.boolean().optional().describe('alcoholic drinks are shown in red and tracked'),
+    alcoholG: z.number().min(0).optional().describe('grams of pure alcohol per basis'),
+  }
+
+  server.registerTool(
+    'add_food',
+    {
+      description: "Add a food or drink to the user's library. Macros are per 100 for unit g/ml, per 1 for scoop/unit.",
+      inputSchema: { name: z.string().min(1), ...foodFields, kcal: z.number().min(0) },
+    },
+    async (input) => text(await foodCreate(uid, input as Record<string, unknown>)),
+  )
+
+  server.registerTool(
+    'update_food',
+    {
+      description: 'Edit an existing library food. Get the id from search_foods. Only provided fields change.',
+      inputSchema: { id: z.string().min(1), name: z.string().min(1).optional(), ...foodFields },
+    },
+    async ({ id, ...changes }) => text(await foodUpdate(uid, id, changes as Record<string, unknown>)),
   )
 
   return server
@@ -296,6 +371,18 @@ const DAY_SUMMARY_PROPS = {
     properties: { kcal: { type: 'number' }, pureAlcoholGrams: { type: 'number' } },
   },
   workouts: { type: 'array', items: WORKOUT_SCHEMA },
+}
+
+const FOOD_INPUT_PROPS = {
+  name: { type: 'string', description: 'Food or drink name' },
+  unit: { type: 'string', enum: ['g', 'ml', 'scoop', 'unit'], description: 'g/ml → macros per 100; scoop/unit → macros per 1' },
+  kcal: { type: 'number' },
+  protein: { type: 'number', description: 'grams' },
+  carbs: { type: 'number', description: 'grams' },
+  fat: { type: 'number', description: 'grams' },
+  serving: { type: ['number', 'null'], description: 'default portion in g/ml (per-100 foods only)' },
+  alcohol: { type: 'boolean', description: 'alcoholic drinks are shown in red and tracked' },
+  alcoholG: { type: ['number', 'null'], description: 'grams of pure alcohol per basis' },
 }
 
 const openApiSchema = (host: string) => ({
@@ -404,9 +491,34 @@ const openApiSchema = (host: string) => ({
       },
     },
     '/foods': {
+      post: {
+        operationId: 'addFood',
+        summary: "Add a food or drink to the user's library (macros per 100 for g/ml, per 1 for scoop/unit)",
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { type: 'object', required: ['name', 'kcal'], properties: FOOD_INPUT_PROPS },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Created food',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { ok: { type: 'boolean' }, id: { type: 'string' }, food: { type: 'object', properties: FOOD_INPUT_PROPS } },
+                },
+              },
+            },
+          },
+        },
+      },
       get: {
         operationId: 'searchFoods',
-        summary: "Search the user's food/drink library",
+        summary: "Search the user's food/drink library (returns ids usable with updateFood)",
         parameters: [
           { name: 'query', in: 'query', required: false, schema: { type: 'string' }, description: 'Substring of food name' },
         ],
@@ -420,6 +532,7 @@ const openApiSchema = (host: string) => ({
                   items: {
                     type: 'object',
                     properties: {
+                      id: { type: 'string' },
                       name: { type: 'string' },
                       unit: { type: ['string', 'null'] },
                       serving: { type: ['number', 'null'] },
@@ -435,19 +548,49 @@ const openApiSchema = (host: string) => ({
         },
       },
     },
+    '/foods/{id}': {
+      patch: {
+        operationId: 'updateFood',
+        summary: 'Edit an existing library food — only provided fields change. Get the id from searchFoods.',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: 'Food id from searchFoods' },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: FOOD_INPUT_PROPS },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Updated food',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { ok: { type: 'boolean' }, id: { type: 'string' }, changes: { type: 'object', properties: FOOD_INPUT_PROPS } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 })
 
 export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds: 60 }, async (req, res) => {
   const path = (req.path.startsWith('/api') ? req.path.slice(4) : req.path) || '/'
 
-  if (req.method !== 'GET') {
-    res.status(405).json({ error: 'GET only' })
+  if (!['GET', 'POST', 'PATCH'].includes(req.method)) {
+    res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
   // schema is public — it contains no data or secrets
-  if (path === '/openapi.json') {
+  if (req.method === 'GET' && path === '/openapi.json') {
     // behind the hosting rewrite the original domain arrives via x-forwarded-host
     const host = req.get('x-forwarded-host')?.split(',')[0].trim() || req.get('host') || 'localhost'
     res.json(openApiSchema(host))
@@ -461,8 +604,25 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
     return
   }
 
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const foodIdMatch = path.match(/^\/foods\/([A-Za-z0-9]+)$/)
+
   try {
-    if (path === '/goals') {
+    if (req.method === 'POST' && path === '/foods') {
+      try {
+        res.json(await foodCreate(uid, body))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'PATCH' && foodIdMatch) {
+      try {
+        res.json(await foodUpdate(uid, foodIdMatch[1], body))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method !== 'GET') {
+      res.status(404).json({ error: 'Unknown endpoint. See /api/openapi.json' })
+    } else if (path === '/goals') {
       res.json(await goalsPayload(uid))
     } else if (path === '/day') {
       const date = String(req.query.date ?? '')

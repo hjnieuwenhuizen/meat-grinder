@@ -48,8 +48,9 @@ function McpPanel({ uid }: { uid: string }) {
     <Panel className="p-5">
       <div className="mb-1 font-medium">🤖 LLM connection (MCP)</div>
       <p className="mb-4 text-xs text-mist">
-        Lets an AI assistant read your diary live — goals, meals, workouts, sleep, steps, heart rate.
-        Read-only. The URL below is a secret: anyone who has it can read your data, so treat it like a password.
+        Lets an AI assistant read your diary live — goals, meals, workouts, sleep, steps, heart rate —
+        and add or edit foods in your library. The URL below is a secret: anyone who has it can access
+        your data, so treat it like a password.
       </p>
 
       {url ? (
