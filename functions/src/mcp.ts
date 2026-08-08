@@ -597,9 +597,15 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
     return
   }
 
-  const headerKey = req.get('x-api-key') ?? req.get('authorization')?.replace(/^Bearer\s+/i, '')
+  const headerKey = req.get('x-api-key') ?? req.get('authorization')?.replace(/^(Bearer|Basic)\s+/i, '')
   const uid = await uidForKey(headerKey?.trim())
   if (!uid) {
+    // diagnostic: log the shape of what arrived, never the value itself
+    logger.info(
+      `api auth failed: ${req.method} ${path} ua="${req.get('user-agent')?.slice(0, 60)}" ` +
+      `xApiKey=${req.get('x-api-key') ? `len ${req.get('x-api-key')!.trim().length}` : 'absent'} ` +
+      `authHeader=${req.get('authorization') ? `"${req.get('authorization')!.slice(0, 10)}…"` : 'absent'}`,
+    )
     res.status(401).json({ error: 'Invalid or missing X-API-Key. Generate one in Meat Grinder → Settings.' })
     return
   }
