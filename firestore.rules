@@ -8,5 +8,62 @@ service cloud.firestore {
     match /garminUsers/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
+
+    // Family leaderboard. The doc id IS the invite code (unguessable), so any
+    // signed-in user may `get` one to join — but never list them.
+    match /families/{code} {
+      function isMember() {
+        return request.auth != null && request.auth.uid in resource.data.members;
+      }
+      allow get: if request.auth != null;
+      allow list: if false;
+      // creator must be the sole initial member
+      allow create: if request.auth != null
+        && request.resource.data.members.keys().hasOnly([request.auth.uid]);
+      // members may edit; non-members may only add themselves (join)
+      allow update: if isMember() || (
+        request.auth != null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+        && request.resource.data.members.diff(resource.data.members).affectedKeys().hasOnly([request.auth.uid])
+      );
+      allow delete: if false;
+
+      // daily score summaries — each member writes only their own docs ({uid}_{date})
+      // (see /globalScores for the opt-in global variant)
+      match /scores/{scoreId} {
+        function isFamMember() {
+          return request.auth != null
+            && request.auth.uid in get(/databases/$(database)/documents/families/$(code)).data.members;
+        }
+        allow read: if isFamMember();
+        allow create, update: if isFamMember()
+          && scoreId == request.auth.uid + '_' + request.resource.data.date
+          && request.resource.data.uid == request.auth.uid;
+        allow delete: if isFamMember() && scoreId.split('_')[0] == request.auth.uid;
+      }
+
+      // long-range challenges — any member may create/edit/delete
+      match /challenges/{challengeId} {
+        function isFamMember() {
+          return request.auth != null
+            && request.auth.uid in get(/databases/$(database)/documents/families/$(code)).data.members;
+        }
+        allow read, write: if isFamMember();
+      }
+    }
+
+    // Global leaderboard — opt-in public profiles (name/photo) + daily scores,
+    // visible to any signed-in user, writable only by their owner.
+    match /globalUsers/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /globalScores/{scoreId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && scoreId == request.auth.uid + '_' + request.resource.data.date
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if request.auth != null && scoreId.split('_')[0] == request.auth.uid;
+    }
   }
 }

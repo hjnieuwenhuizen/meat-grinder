@@ -1,5 +1,7 @@
-import { useMemo, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react'
 import { useDay, totalsOf, goalFor, type FoodsApi } from '../hooks/useData'
+import { publishScore, type PublishTargets } from '../hooks/useFamily'
+import { scoreDay, stepsOf } from '../lib/score'
 import { todayKey, addDays, fmtLong } from '../lib/dates'
 import { isPer100, unitOf, amountOf, fmtAmount, basisLabel, scaleFor } from '../lib/units'
 import { MEALS, defaultMealNow } from '../lib/meals'
@@ -16,13 +18,14 @@ interface TodayProps {
   foods: Food[]
   addFood: FoodsApi['addFood']
   updateFood: FoodsApi['updateFood']
+  publish: PublishTargets
 }
 
 type Drag = { id: string; kind: 'entry' | 'workout' } | null
 
-export default function Today({ uid, settings, foods, addFood, updateFood }: TodayProps) {
+export default function Today({ uid, settings, foods, addFood, updateFood, publish }: TodayProps) {
   const [key, setKey] = useState(todayKey())
-  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, addWorkout, updateWorkout, removeWorkout } = useDay(uid, key)
+  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout } = useDay(uid, key)
   const [adding, setAdding] = useState(false)
   const [rescuing, setRescuing] = useState(false)
   const [editing, setEditing] = useState<Entry | null>(null)
@@ -32,6 +35,15 @@ export default function Today({ uid, settings, foods, addFood, updateFood }: Tod
 
   const bumpUsed = (food: Food) =>
     updateFood(food.id, { used: (food.used || 0) + 1, lastUsed: Date.now() })
+
+  // keep the leaderboards in sync with whatever day is on screen
+  useEffect(() => {
+    if ((!publish.code && !publish.global) || !day) return
+    const t = setTimeout(() => {
+      void publishScore(publish, uid, key, scoreDay(day, settings)).catch(() => {})
+    }, 800)
+    return () => clearTimeout(t)
+  }, [publish, uid, key, day, settings])
 
   if (!day) return <div className="py-20 text-center text-mist">Loading…</div>
 
@@ -101,11 +113,21 @@ export default function Today({ uid, settings, foods, addFood, updateFood }: Tod
           />
           <span className="text-xs text-mist">h sleep</span>
         </label>
-        {day.garmin?.steps ? (
-          <span className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist" title="Steps (Garmin)">
-            👟 <b className="font-medium text-bone">{day.garmin.steps.toLocaleString()}</b> steps
-          </span>
-        ) : null}
+        <label className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm" title={day.garmin?.steps ? 'Steps (Garmin — type to override)' : 'Steps (manual)'}>
+          <span>👟</span>
+          <input
+            key={key}
+            type="number" inputMode="numeric" step="100" min="0" max="200000"
+            defaultValue={stepsOf(day) || ''}
+            onBlur={(e) => {
+              const v = Math.round(Number(e.target.value)) || null
+              if (v !== (stepsOf(day) || null)) setSteps(v)
+            }}
+            placeholder="–"
+            className="w-16 bg-transparent text-center font-medium text-bone outline-none"
+          />
+          <span className="text-xs text-mist">steps</span>
+        </label>
         {day.garmin?.restingHr ? (
           <span className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist" title="Resting heart rate (Garmin)">
             ❤️ <b className="font-medium text-bone">{day.garmin.restingHr}</b> bpm rest
@@ -472,9 +494,9 @@ function WorkoutModal({ initial, onSave, onClose }: {
 
   const submit = () => {
     onSave({
+      // spread first so Garmin metadata (name, HR, pace, …) survives an edit
+      ...(initial ?? {}),
       id: initial?.id ?? crypto.randomUUID(),
-      ...(initial?.garminId ? { garminId: initial.garminId } : {}),
-      ...(initial?.name ? { name: initial.name } : {}),
       type: w.type,
       duration: Number(w.duration) || null,
       kcal: Number(w.kcal) || null,

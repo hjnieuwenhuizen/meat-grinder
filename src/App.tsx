@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { auth, logOut } from './lib/firebase'
 import { useSettings, useFoods } from './hooks/useData'
+import { useFamily, useScoreBackfill } from './hooks/useFamily'
 import SignIn from './components/SignIn'
 import Today from './components/Today'
 import Reports from './components/Reports'
 import Foods from './components/Foods'
 import Goals from './components/Goals'
+import Compete from './components/Compete'
 
-const TABS = ['Diary', 'Reports', 'Library', 'Settings'] as const
+const TABS = ['Diary', 'Compete', 'Reports', 'Library', 'Settings'] as const
 type Tab = (typeof TABS)[number]
 
 // hash routing (#diary, #reports, …) so refresh and back/forward keep the tab
@@ -40,6 +42,12 @@ export default function App() {
 function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) => void }) {
   const { settings, save } = useSettings(user.uid)
   const foodsApi = useFoods(user.uid)
+  const fam = useFamily(user.uid)
+  const publish = useMemo(
+    () => ({ code: fam.code ?? null, global: fam.global }),
+    [fam.code, fam.global],
+  )
+  useScoreBackfill(user.uid, settings, publish)
 
   if (!settings) {
     return <div className="flex min-h-dvh items-center justify-center text-mist">Loading…</div>
@@ -71,7 +79,8 @@ function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) =
         </div>
       </header>
 
-      {tab === 'Diary' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} />}
+      {tab === 'Diary' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} publish={publish} />}
+      {tab === 'Compete' && <Compete user={user} fam={fam} />}
       {tab === 'Reports' && <Reports uid={user.uid} settings={settings} />}
       {tab === 'Library' && <Foods {...foodsApi} />}
       {tab === 'Settings' && <Goals uid={user.uid} settings={settings} save={save} />}

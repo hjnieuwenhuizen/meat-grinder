@@ -102,8 +102,18 @@ function FoodForm({ initial, onSave, onClose }: {
     fat: initial.fat ? String(initial.fat) : '',
     serving: initial.serving ? String(initial.serving) : '',
   })
+  const [energyUnit, setEnergyUnit] = useState<'kcal' | 'kJ'>('kcal')
   const set = (k: 'name' | 'alcoholG' | 'kcal' | 'protein' | 'carbs' | 'fat' | 'serving') =>
     (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
+  const toggleEnergy = (u: 'kcal' | 'kJ') => {
+    if (u === energyUnit) return
+    const n = Number(f.kcal)
+    if (f.kcal !== '' && !isNaN(n)) {
+      const converted = u === 'kJ' ? n * 4.184 : n / 4.184
+      setF({ ...f, kcal: String(Math.round(converted * 10) / 10) })
+    }
+    setEnergyUnit(u)
+  }
   const valid = Boolean(f.name.trim()) && f.kcal !== ''
   const per100 = isPer100(f.unit)
   const basis = per100 ? `per 100${f.unit}` : `per ${f.unit}`
@@ -115,7 +125,7 @@ function FoodForm({ initial, onSave, onClose }: {
       unit: f.unit,
       alcohol: f.alcohol,
       alcoholG: f.alcohol ? Number(f.alcoholG) || 0 : null,
-      kcal: Number(f.kcal) || 0,
+      kcal: energyUnit === 'kJ' ? Math.round((Number(f.kcal) || 0) / 4.184) : Number(f.kcal) || 0,
       protein: Number(f.protein) || 0,
       carbs: Number(f.carbs) || 0,
       fat: Number(f.fat) || 0,
@@ -146,7 +156,29 @@ function FoodForm({ initial, onSave, onClose }: {
         </div>
         <p className="text-xs text-mist">Values {basis}</p>
         <div className="grid grid-cols-2 gap-3">
-          <Field label={`Calories ${basis}`} type="number" inputMode="decimal" value={f.kcal} onChange={set('kcal')} />
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between text-xs font-medium uppercase tracking-wider text-mist">
+              Energy {basis}
+              <span className="flex gap-1 normal-case">
+                {(['kcal', 'kJ'] as const).map((u) => (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => toggleEnergy(u)}
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition ${
+                      energyUnit === u ? 'bg-raise text-bone' : 'text-mist'
+                    }`}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </span>
+            </span>
+            <input
+              type="number" inputMode="decimal" value={f.kcal} onChange={set('kcal')}
+              className="w-full rounded-lg border border-edge bg-ink px-3 py-2 text-bone outline-none transition focus:border-grind/60"
+            />
+          </label>
           <Field label={`Protein (g) ${basis}`} type="number" inputMode="decimal" value={f.protein} onChange={set('protein')} />
           <Field label={`Carbs (g) ${basis}`} type="number" inputMode="decimal" value={f.carbs} onChange={set('carbs')} />
           <Field label={`Fat (g) ${basis}`} type="number" inputMode="decimal" value={f.fat} onChange={set('fat')} />

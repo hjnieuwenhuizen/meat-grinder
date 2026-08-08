@@ -33,6 +33,12 @@ interface Workout {
   distance: number | null
   when: 'before' | 'after'
   meal: MealId
+  avgHr?: number | null
+  maxHr?: number | null
+  paceMinKm?: number | null
+  speedKmh?: number | null
+  elevM?: number | null
+  cadence?: number | null
 }
 
 interface DayDoc {
@@ -51,6 +57,12 @@ interface GarminActivity {
   duration?: number
   calories?: number
   distance?: number
+  averageHR?: number
+  maxHR?: number
+  /** metres per second */
+  averageSpeed?: number
+  elevationGain?: number
+  averageRunningCadenceInStepsPerMinute?: number
 }
 
 const tokensRef = (uid: string) => db.doc(`users/${uid}/meta/garminTokens`)
@@ -188,10 +200,34 @@ async function syncUser(uid: string, full = false): Promise<string> {
     if (!actKeys.includes(dateKey)) continue
 
     const day = await loadDay(dateKey)
-    if (day.workouts.some((w) => w.garminId === act.activityId)) continue
+
+    const type = mapType(act)
+    const paced = ['run', 'walk', 'hike'].includes(type)
+    const metrics = {
+      avgHr: act.averageHR ? Math.round(act.averageHR) : null,
+      maxHr: act.maxHR ? Math.round(act.maxHR) : null,
+      paceMinKm: paced && act.averageSpeed && act.averageSpeed > 0
+        ? Math.round((1000 / act.averageSpeed / 60) * 100) / 100
+        : null,
+      speedKmh: type === 'ride' && act.averageSpeed ? Math.round(act.averageSpeed * 3.6 * 10) / 10 : null,
+      elevM: act.elevationGain ? Math.round(act.elevationGain) : null,
+      cadence: type === 'run' && act.averageRunningCadenceInStepsPerMinute
+        ? Math.round(act.averageRunningCadenceInStepsPerMinute)
+        : null,
+    }
+
+    const existing = day.workouts.find((w) => w.garminId === act.activityId)
+    if (existing) {
+      // backfill metrics onto workouts synced before we captured them
+      if (existing.avgHr == null && (metrics.avgHr != null || metrics.paceMinKm != null || metrics.elevM != null)) {
+        Object.assign(existing, metrics)
+        day._dirty = true
+        logger.info(`Backfilled metrics ${dateKey}: ${act.activityId}`)
+      }
+      continue
+    }
 
     const hour = Number(start.slice(11, 13)) + Number(start.slice(14, 16)) / 60
-    const type = mapType(act)
     day.workouts.push({
       id: crypto.randomUUID(),
       garminId: act.activityId,
@@ -203,6 +239,7 @@ async function syncUser(uid: string, full = false): Promise<string> {
       distance: DISTANCE_TYPES.includes(type) && act.distance ? Math.round((act.distance / 1000) * 10) / 10 : null,
       when: 'before',
       meal: slotFor(hour),
+      ...metrics,
     })
     if ((settings as { trainingEnabled?: boolean }).trainingEnabled) day.training = true
     day._dirty = true

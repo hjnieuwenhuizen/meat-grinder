@@ -3,6 +3,7 @@ import { fmtAmount } from './units'
 import { MEALS } from './meals'
 import { workoutTitle, workoutDetails } from './workouts'
 import { totalsOf, goalFor } from '../hooks/useData'
+import { scoreDay, MAX_POINTS } from './score'
 import type { DayDoc, Macros, Settings } from '../types'
 
 const r = (n: number) => Math.round(n * 10) / 10
@@ -57,13 +58,11 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
     ...(() => {
       const extra: string[] = []
       if (day.sleep) extra.push(`Sleep last night: ${day.sleep}h`)
-      const g = day.garmin
-      if (g?.steps || g?.restingHr) {
-        extra.push(`Garmin: ${[
-          g.steps ? `${g.steps.toLocaleString()} steps` : null,
-          g.restingHr ? `resting HR ${g.restingHr} bpm` : null,
-        ].filter(Boolean).join(', ')}`)
-      }
+      const steps = day.steps ?? day.garmin?.steps
+      if (steps) extra.push(`Steps: ${steps.toLocaleString()}${day.steps ? ' (manual)' : ' (Garmin)'}`)
+      if (day.garmin?.restingHr) extra.push(`Resting HR: ${day.garmin.restingHr} bpm (Garmin)`)
+      const score = scoreDay(day, settings)
+      extra.push(`Leaderboard score: ${score.points}/${MAX_POINTS} pts`)
       const booze = day.entries.filter((e) => e.alcohol)
       const shame = booze.reduce((s, e) => s + e.kcal, 0)
       const grams = booze.reduce((s, e) => s + (e.alcoholG || 0), 0)
@@ -94,8 +93,9 @@ export function rangeReport(
       ? ` | trained: ${day.workouts.map((w) => `${workoutTitle(w)}${workoutDetails(w) ? ` (${workoutDetails(w)})` : ''}`).join(', ')}`
       : ''
     const sleep = day.sleep ? ` | sleep ${day.sleep}h` : ''
+    const steps = day.steps ?? day.garmin?.steps
     const wellness = [
-      day.garmin?.steps ? ` | steps ${day.garmin.steps}` : '',
+      steps ? ` | steps ${steps}` : '',
       day.garmin?.restingHr ? ` | resting HR ${day.garmin.restingHr}` : '',
     ].join('')
     const drinks = day.entries.filter((e) => e.alcohol)

@@ -65,6 +65,8 @@ export function useDay(uid: string, key: string) {
 
   const setSleep = (sleep: number | null) => write({ ...loaded(), sleep })
 
+  const setSteps = (steps: number | null) => write({ ...loaded(), steps })
+
   // extra lets callers atomically flip the training flag with the same write
   const addWorkout = (w: Workout, extra: Partial<DayDoc> = {}) =>
     write({ ...loaded(), ...extra, workouts: [...loaded().workouts, w] })
@@ -75,7 +77,7 @@ export function useDay(uid: string, key: string) {
   const removeWorkout = (id: string) =>
     write({ ...loaded(), workouts: loaded().workouts.filter((w) => w.id !== id) })
 
-  return { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, addWorkout, updateWorkout, removeWorkout }
+  return { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout }
 }
 
 export function useFoods(uid: string) {

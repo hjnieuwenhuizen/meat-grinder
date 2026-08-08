@@ -60,6 +60,17 @@ export interface Workout {
   meal?: MealId | null
   /** set by the Garmin sync for dedupe */
   garminId?: number
+  /* --- Garmin metrics (present when the watch provides them) --- */
+  avgHr?: number | null
+  maxHr?: number | null
+  /** minutes per km (runs/walks/hikes) */
+  paceMinKm?: number | null
+  /** km/h (rides) */
+  speedKmh?: number | null
+  /** elevation gain in metres */
+  elevM?: number | null
+  /** running cadence, steps per minute */
+  cadence?: number | null
 }
 
 /** daily wellness pulled from Garmin */
@@ -73,7 +84,64 @@ export interface DayDoc {
   entries: Entry[]
   workouts: Workout[]
   sleep?: number | null
+  /** manually entered steps — wins over garmin.steps */
+  steps?: number | null
   garmin?: GarminDay
+}
+
+/* --- family leaderboard --- */
+
+export interface FamilyMember {
+  name: string
+  /** tiny data-URL avatar, or Google photoURL */
+  photo?: string | null
+  joinedAt: number
+}
+
+export interface FamilyDoc {
+  name: string
+  members: Record<string, FamilyMember>
+  createdAt: number
+}
+
+/** which daily points were earned (values are points, 0 = missed) */
+export interface ScoreBreakdown {
+  logged: number
+  protein: number
+  kcal: number
+  workout: number
+  steps: number
+  sleep: number
+  dry: number
+  perfect: number
+}
+
+/** published daily score summary — never the diary itself */
+export interface ScoreDoc {
+  uid: string
+  date: string
+  points: number
+  steps: number
+  /** workout distance that day (km) — absent on old docs */
+  km?: number
+  breakdown: ScoreBreakdown
+  updatedAt: number
+}
+
+export type ChallengeMetric =
+  | 'steps' | 'points' | 'km'
+  | 'workoutDays' | 'proteinDays' | 'greenDays' | 'dryDays'
+
+/** long-range competition, e.g. "most steps Sep–Dec" — whole family competes */
+export interface ChallengeDoc {
+  id: string
+  name: string
+  metric: ChallengeMetric
+  /** yyyy-mm-dd, inclusive */
+  start: string
+  end: string
+  createdBy: string
+  createdAt: number
 }
 
 export interface McpConfig {

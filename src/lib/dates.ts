@@ -48,3 +48,8 @@ export const fmtLong = (key: string): string => {
 }
 
 export const fmtMonth = (year: number, month: number): string => `${MONTHS[month]} ${year}`
+
+export const fmtShort = (key: string): string => {
+  const d = fromKey(key)
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`
+}

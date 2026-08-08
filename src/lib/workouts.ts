@@ -33,12 +33,26 @@ export const workoutTitle = (w: Pick<Workout, 'type' | 'name'>): string => {
   return DAY_TYPES.includes(t.id) ? `${t.label} day` : t.label
 }
 
-// "45 min · 320 kcal · 5.2 km"
-export const workoutDetails = (w: Pick<Workout, 'duration' | 'kcal' | 'distance'>): string =>
+// 5.53 → "5:32 /km"
+export const fmtPace = (minPerKm: number): string => {
+  const m = Math.floor(minPerKm)
+  const s = Math.round((minPerKm - m) * 60)
+  return `${m}:${String(s).padStart(2, '0')} /km`
+}
+
+// "38 min · 481 kcal · 5.2 km · 5:32 /km · ♥ 142 (max 167) · ↑86m"
+export const workoutDetails = (
+  w: Pick<Workout, 'duration' | 'kcal' | 'distance' | 'avgHr' | 'maxHr' | 'paceMinKm' | 'speedKmh' | 'elevM' | 'cadence'>,
+): string =>
   [
     w.duration ? `${w.duration} min` : null,
     w.kcal ? `${w.kcal} kcal` : null,
     w.distance ? `${w.distance} km` : null,
+    w.paceMinKm ? fmtPace(w.paceMinKm) : null,
+    w.speedKmh ? `${w.speedKmh} km/h` : null,
+    w.avgHr ? `♥ ${w.avgHr}${w.maxHr ? ` (max ${w.maxHr})` : ''}` : null,
+    w.elevM ? `↑${w.elevM}m` : null,
+    w.cadence ? `${w.cadence} spm` : null,
   ]
     .filter(Boolean)
     .join(' · ')
