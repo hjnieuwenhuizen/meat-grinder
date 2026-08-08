@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { onAuthStateChanged } from 'firebase/auth'
+import { onAuthStateChanged, type User } from 'firebase/auth'
 import { auth, logOut } from './lib/firebase'
 import { useSettings, useFoods } from './hooks/useData'
 import SignIn from './components/SignIn'
@@ -8,11 +8,12 @@ import Reports from './components/Reports'
 import Foods from './components/Foods'
 import Goals from './components/Goals'
 
-const TABS = ['Today', 'Reports', 'Foods', 'Goals']
+const TABS = ['Today', 'Reports', 'Foods', 'Goals'] as const
+type Tab = (typeof TABS)[number]
 
 export default function App() {
-  const [user, setUser] = useState(undefined)
-  const [tab, setTab] = useState('Today')
+  const [user, setUser] = useState<User | null | undefined>(undefined)
+  const [tab, setTab] = useState<Tab>('Today')
 
   useEffect(() => onAuthStateChanged(auth, setUser), [])
 
@@ -22,7 +23,7 @@ export default function App() {
   return <Shell user={user} tab={tab} setTab={setTab} />
 }
 
-function Shell({ user, tab, setTab }) {
+function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) => void }) {
   const { settings, save } = useSettings(user.uid)
   const foodsApi = useFoods(user.uid)
 
@@ -50,7 +51,7 @@ function Shell({ user, tab, setTab }) {
               </button>
             ))}
           </nav>
-          <button onClick={logOut} title={user.email} className="text-xs text-mist hover:text-bone">
+          <button onClick={logOut} title={user.email ?? undefined} className="text-xs text-mist hover:text-bone">
             Sign out
           </button>
         </div>

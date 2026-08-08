@@ -23,4 +23,5 @@ export const signIn = () =>
     }
     throw e
   })
+
 export const logOut = () => signOut(auth)

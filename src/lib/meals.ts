@@ -1,4 +1,6 @@
-export const MEALS = [
+import type { MealId } from '../types'
+
+export const MEALS: { id: MealId; label: string }[] = [
   { id: 'breakfast', label: 'Breakfast' },
   { id: 'snack1', label: 'Morning snack' },
   { id: 'lunch', label: 'Lunch' },
@@ -7,10 +9,11 @@ export const MEALS = [
   { id: 'snack3', label: 'Evening snack' },
 ]
 
-export const mealLabel = (id) => MEALS.find((m) => m.id === id)?.label ?? 'Unsorted'
+export const mealLabel = (id: MealId | null | undefined): string =>
+  MEALS.find((m) => m.id === id)?.label ?? 'Unsorted'
 
 // sensible default slot based on the clock
-export const defaultMealNow = () => {
+export const defaultMealNow = (): MealId => {
   const h = new Date().getHours() + new Date().getMinutes() / 60
   if (h < 10.5) return 'breakfast'
   if (h < 12) return 'snack1'

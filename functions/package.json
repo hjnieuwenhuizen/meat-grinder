@@ -1,13 +1,19 @@
 {
   "name": "meat-grinder-functions",
   "private": true,
-  "main": "index.js",
+  "main": "lib/index.js",
   "engines": {
     "node": "20"
+  },
+  "scripts": {
+    "build": "tsc"
   },
   "dependencies": {
     "firebase-admin": "^14.2.0",
     "firebase-functions": "^7.3.2",
     "garmin-connect": "^1.6.2"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
   }
 }

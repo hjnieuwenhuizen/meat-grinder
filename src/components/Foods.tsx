@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react'
 import { UNITS, isPer100, basisLabel } from '../lib/units'
 import { CopyButton, Modal, Field, Panel, Plus, Trash, Pencil } from './ui'
+import type { FoodsApi } from '../hooks/useData'
+import type { Food } from '../types'
 
-const EMPTY = { name: '', unit: 'g', alcohol: false, kcal: '', protein: '', carbs: '', fat: '', serving: '' }
+type FoodDraft = Omit<Food, 'id'>
 
-export default function Foods({ foods, addFood, updateFood, deleteFood }) {
+const EMPTY: FoodDraft = { name: '', unit: 'g', alcohol: false, kcal: 0, protein: 0, carbs: 0, fat: 0, serving: null }
+
+export default function Foods({ foods, addFood, updateFood, deleteFood }: FoodsApi) {
   const [search, setSearch] = useState('')
-  const [editing, setEditing] = useState(null) // null | 'new' | food object
+  const [editing, setEditing] = useState<Food | 'new' | null>(null)
 
   const filtered = useMemo(
     () => foods.filter((f) => f.name.toLowerCase().includes(search.toLowerCase())),
@@ -82,20 +86,25 @@ export default function Foods({ foods, addFood, updateFood, deleteFood }) {
   )
 }
 
-function FoodForm({ initial, onSave, onClose }) {
+function FoodForm({ initial, onSave, onClose }: {
+  initial: FoodDraft
+  onSave: (data: FoodDraft) => void
+  onClose: () => void
+}) {
   const [f, setF] = useState({
     name: initial.name,
     unit: initial.unit || 'g',
     alcohol: !!initial.alcohol,
     alcoholG: initial.alcoholG ? String(initial.alcoholG) : '',
-    kcal: String(initial.kcal ?? ''),
-    protein: String(initial.protein ?? ''),
-    carbs: String(initial.carbs ?? ''),
-    fat: String(initial.fat ?? ''),
+    kcal: initial.kcal ? String(initial.kcal) : '',
+    protein: initial.protein ? String(initial.protein) : '',
+    carbs: initial.carbs ? String(initial.carbs) : '',
+    fat: initial.fat ? String(initial.fat) : '',
     serving: initial.serving ? String(initial.serving) : '',
   })
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
-  const valid = f.name.trim() && f.kcal !== ''
+  const set = (k: 'name' | 'alcoholG' | 'kcal' | 'protein' | 'carbs' | 'fat' | 'serving') =>
+    (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
+  const valid = Boolean(f.name.trim()) && f.kcal !== ''
   const per100 = isPer100(f.unit)
   const basis = per100 ? `per 100${f.unit}` : `per ${f.unit}`
 

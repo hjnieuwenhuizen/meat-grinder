@@ -1,25 +1,37 @@
-import { useMemo, useState } from 'react'
-import { useDay, totalsOf, goalFor } from '../hooks/useData'
+import { useMemo, useState, type DragEvent, type ReactNode } from 'react'
+import { useDay, totalsOf, goalFor, type FoodsApi } from '../hooks/useData'
 import { todayKey, addDays, fmtLong } from '../lib/dates'
 import { isPer100, unitOf, amountOf, fmtAmount, basisLabel, scaleFor } from '../lib/units'
 import { MEALS, defaultMealNow } from '../lib/meals'
 import { WORKOUT_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
+import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
 
-const MACROS = ['protein', 'carbs', 'fat']
+const MACROS = ['protein', 'carbs', 'fat'] as const
 
-export default function Today({ uid, settings, foods, addFood, updateFood }) {
+interface TodayProps {
+  uid: string
+  settings: Settings
+  foods: Food[]
+  addFood: FoodsApi['addFood']
+  updateFood: FoodsApi['updateFood']
+}
+
+type Drag = { id: string; kind: 'entry' | 'workout' } | null
+
+export default function Today({ uid, settings, foods, addFood, updateFood }: TodayProps) {
   const [key, setKey] = useState(todayKey())
   const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, addWorkout, updateWorkout, removeWorkout } = useDay(uid, key)
   const [adding, setAdding] = useState(false)
   const [rescuing, setRescuing] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [editingWorkout, setEditingWorkout] = useState(null) // null | 'new' | workout
-  const [drag, setDrag] = useState(null) // { id, kind: 'entry' | 'workout' }
-  const [dragOver, setDragOver] = useState(null)
+  const [editing, setEditing] = useState<Entry | null>(null)
+  const [editingWorkout, setEditingWorkout] = useState<Workout | 'new' | null>(null)
+  const [drag, setDrag] = useState<Drag>(null)
+  const [dragOver, setDragOver] = useState<MealId | null>(null)
 
-  const bumpUsed = (food) => updateFood(food.id, { used: (food.used || 0) + 1, lastUsed: Date.now() })
+  const bumpUsed = (food: Food) =>
+    updateFood(food.id, { used: (food.used || 0) + 1, lastUsed: Date.now() })
 
   if (!day) return <div className="py-20 text-center text-mist">Loading…</div>
 
@@ -131,11 +143,11 @@ export default function Today({ uid, settings, foods, addFood, updateFood }) {
       {/* macro rings — protein is a hard target; carbs/fat are flexible energy
           levers judged by the calorie budget, never by their own line */}
       <div className="grid grid-cols-3 gap-3">
-        {MACROS.map((key) => {
-          const val = totals[key]
-          const g = goal[key]
-          let color
-          if (key === 'protein') {
+        {MACROS.map((macro) => {
+          const val = totals[macro]
+          const g = goal[macro]
+          let color: string
+          if (macro === 'protein') {
             const r = g > 0 ? val / g : 0
             color = r >= 1 ? 'var(--color-protein)' : r >= 0.8 ? 'var(--color-carbs)' : 'var(--color-mist)'
           } else {
@@ -145,13 +157,13 @@ export default function Today({ uid, settings, foods, addFood, updateFood }) {
             else color = 'var(--color-grind)'
           }
           return (
-            <Panel key={key} className="flex flex-col items-center gap-2 p-4">
+            <Panel key={macro} className="flex flex-col items-center gap-2 p-4">
               <Ring value={val} goal={g} color={color} okOver>
                 <span className="text-lg font-bold tabular-nums">{Math.round(val)}</span>
                 <span className="text-[10px] text-mist">/ {Math.round(g)}g</span>
               </Ring>
-              <span className="text-xs font-medium uppercase tracking-wider text-mist">{key}</span>
-              {key !== 'protein' && (
+              <span className="text-xs font-medium uppercase tracking-wider text-mist">{macro}</span>
+              {macro !== 'protein' && (
                 <span className="-mt-1 text-center text-[9px] leading-tight text-mist/60">flexible — balanced against calories</span>
               )}
             </Panel>
@@ -182,8 +194,8 @@ export default function Today({ uid, settings, foods, addFood, updateFood }) {
           <p className="p-6 text-center text-sm text-mist">Nothing logged yet. Feed the grinder.</p>
         )}
         {(() => {
-          const known = new Set(MEALS.map((m) => m.id))
-          const groups = [
+          const known = new Set<string>(MEALS.map((m) => m.id))
+          const groups: { id: MealId | null; label: string; entries: Entry[]; workouts: Workout[] }[] = [
             ...MEALS.map((m) => ({
               ...m,
               entries: day.entries.filter((e) => e.meal === m.id),
@@ -191,12 +203,12 @@ export default function Today({ uid, settings, foods, addFood, updateFood }) {
             })),
             {
               id: null, label: 'Unsorted',
-              entries: day.entries.filter((e) => !known.has(e.meal)),
-              workouts: day.workouts.filter((w) => !known.has(w.meal)),
+              entries: day.entries.filter((e) => !known.has(e.meal ?? '')),
+              workouts: day.workouts.filter((w) => !known.has(w.meal ?? '')),
             },
           ].filter((g) => g.entries.length || g.workouts.length || (drag && g.id))
 
-          const workoutRow = (w) => (
+          const workoutRow = (w: Workout) => (
             <div
               key={w.id}
               draggable
@@ -219,7 +231,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood }) {
             </div>
           )
 
-          const entryRow = (e) => (
+          const entryRow = (e: Entry) => (
             <div
               key={e.id}
               draggable
@@ -250,7 +262,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood }) {
           return groups.map((g) => (
             <div
               key={g.id ?? 'unsorted'}
-              onDragOver={(ev) => { if (drag) { ev.preventDefault(); setDragOver(g.id) } }}
+              onDragOver={(ev: DragEvent) => { if (drag) { ev.preventDefault(); setDragOver(g.id) } }}
               onDragLeave={() => setDragOver((d) => (d === g.id ? null : d))}
               onDrop={() => {
                 if (drag) {
@@ -329,12 +341,12 @@ export default function Today({ uid, settings, foods, addFood, updateFood }) {
   )
 }
 
-function Mission({ goal, totals, foods, onRescue }) {
+function Mission({ goal, totals, foods, onRescue }: { goal: Macros; totals: Macros; foods: Food[]; onRescue: () => void }) {
   const pLeft = Math.round(goal.protein - totals.protein)
   const kLeft = Math.round(goal.kcal - totals.kcal)
   const canRescue = pLeft > 10 && foods.some((f) => f.protein >= 10)
 
-  let text
+  let text: ReactNode
   if (pLeft > 0 && kLeft >= 0) text = <>Eat <b className="text-bone">{pLeft}g more protein</b>. You have <b className="text-bone">{kLeft} kcal</b> remaining.</>
   else if (pLeft > 0 && kLeft < 0) text = <>Still <b className="text-bone">{pLeft}g protein short</b>, {-kLeft} kcal over. Protein first — go lean.</>
   else if (kLeft < 0) text = <>Protein hit. <b className="text-bone">{-kLeft} kcal over</b> — stop grinding.</>
@@ -359,13 +371,19 @@ function Mission({ goal, totals, foods, onRescue }) {
   )
 }
 
-function Rescue({ foods, pGap, kcalLeft, onAdd, onClose }) {
+function Rescue({ foods, pGap, kcalLeft, onAdd, onClose }: {
+  foods: Food[]
+  pGap: number
+  kcalLeft: number
+  onAdd: (entry: Entry, food: Food) => void
+  onClose: () => void
+}) {
   const options = useMemo(() => {
     return foods
       .filter((f) => !f.alcohol && f.protein >= (isPer100(f.unit) ? 10 : 5))
       .map((f) => {
         const per100 = isPer100(f.unit)
-        let amount
+        let amount: number
         if (per100) {
           amount = (pGap / f.protein) * 100
           if (kcalLeft > 0 && f.kcal > 0) amount = Math.min(amount, (kcalLeft / f.kcal) * 100)
@@ -418,20 +436,26 @@ function Rescue({ foods, pGap, kcalLeft, onAdd, onClose }) {
   )
 }
 
-function WorkoutModal({ initial, onSave, onClose }) {
+function WorkoutModal({ initial, onSave, onClose }: {
+  initial: Workout | null
+  onSave: (w: Workout) => void
+  onClose: () => void
+}) {
   const [w, setW] = useState({
-    type: initial?.type ?? 'push',
+    type: (initial?.type ?? 'push') as WorkoutTypeId,
     duration: initial?.duration ? String(initial.duration) : '',
     kcal: initial?.kcal ? String(initial.kcal) : '',
     distance: initial?.distance ? String(initial.distance) : '',
-    when: initial?.when ?? 'before',
+    when: (initial?.when ?? 'before') as 'before' | 'after',
     meal: initial ? initial.meal ?? null : defaultMealNow(),
   })
-  const set = (k) => (e) => setW({ ...w, [k]: e.target.value })
+  const set = (k: 'duration' | 'kcal' | 'distance') =>
+    (e: React.ChangeEvent<HTMLInputElement>) => setW({ ...w, [k]: e.target.value })
 
   const submit = () => {
     onSave({
       id: initial?.id ?? crypto.randomUUID(),
+      ...(initial?.garminId ? { garminId: initial.garminId } : {}),
       type: w.type,
       duration: Number(w.duration) || null,
       kcal: Number(w.kcal) || null,
@@ -441,6 +465,8 @@ function WorkoutModal({ initial, onSave, onClose }) {
     })
     onClose()
   }
+
+  const WHEN: ['before' | 'after', string][] = [['before', 'Before'], ['after', 'After']]
 
   return (
     <Modal title={initial ? 'Edit workout' : 'Log workout'} onClose={onClose}>
@@ -472,7 +498,7 @@ function WorkoutModal({ initial, onSave, onClose }) {
         <div>
           <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-mist">When</span>
           <div className="mb-2 flex gap-1 rounded-full border border-edge bg-ink p-1">
-            {[['before', 'Before'], ['after', 'After']].map(([v, label]) => (
+            {WHEN.map(([v, label]) => (
               <button
                 key={v}
                 type="button"
@@ -498,22 +524,27 @@ function WorkoutModal({ initial, onSave, onClose }) {
   )
 }
 
-function EditEntry({ entry, onSave, onClose }) {
+function EditEntry({ entry, onSave, onClose }: {
+  entry: Entry
+  onSave: (next: Partial<Entry>) => void
+  onClose: () => void
+}) {
   const a0 = amountOf(entry)
   const hasAmount = a0 != null && a0 > 0
   const unit = unitOf(entry)
-  const r1 = (n) => String(Math.round(n * 10) / 10)
+  const r1 = (n: number) => String(Math.round(n * 10) / 10)
 
   const [name, setName] = useState(entry.name)
-  const [meal, setMeal] = useState(entry.meal ?? null)
+  const [meal, setMeal] = useState<MealId | null>(entry.meal ?? null)
   const [amt, setAmt] = useState(hasAmount ? String(a0) : '')
   const [m, setM] = useState({
     kcal: r1(entry.kcal), protein: r1(entry.protein), carbs: r1(entry.carbs), fat: r1(entry.fat),
   })
-  const setMacro = (k) => (e) => setM({ ...m, [k]: e.target.value })
+  const setMacro = (k: keyof typeof m) =>
+    (e: React.ChangeEvent<HTMLInputElement>) => setM({ ...m, [k]: e.target.value })
 
-  const scale = hasAmount ? (Number(amt) || 0) / a0 : 1
-  const valid = name.trim() && (hasAmount ? Number(amt) > 0 : m.kcal !== '')
+  const scale = hasAmount ? (Number(amt) || 0) / (a0 as number) : 1
+  const valid = Boolean(name.trim()) && (hasAmount ? Number(amt) > 0 : m.kcal !== '')
 
   const submit = () => {
     if (!valid) return
@@ -571,8 +602,8 @@ function EditEntry({ entry, onSave, onClose }) {
 }
 
 // projected macros after adding `add` to today's totals
-function MacroImpact({ totals, goal, add }) {
-  const after = {
+function MacroImpact({ totals, goal, add }: { totals: Macros; goal: Macros; add: Macros }) {
+  const after: Macros = {
     kcal: totals.kcal + add.kcal,
     protein: totals.protein + add.protein,
     carbs: totals.carbs + add.carbs,
@@ -580,18 +611,18 @@ function MacroImpact({ totals, goal, add }) {
   }
   const kcalR = goal.kcal > 0 ? after.kcal / goal.kcal : 0
   const flexCls = kcalR <= 1 ? 'text-grind' : kcalR <= 1.05 ? 'text-carbs' : 'text-over'
-  const rows = [
-    ['Calories', totals.kcal, after.kcal, goal.kcal,
-      kcalR > 1.1 ? 'text-over' : kcalR >= 0.9 ? 'text-grind' : 'text-carbs'],
-    ['Protein', totals.protein, after.protein, goal.protein,
-      after.protein >= goal.protein ? 'text-grind' : after.protein >= goal.protein * 0.8 ? 'text-carbs' : 'text-bone'],
-    ['Carbs', totals.carbs, after.carbs, goal.carbs, flexCls],
-    ['Fat', totals.fat, after.fat, goal.fat, flexCls],
+  const rows: { label: string; now: number; aft: number; g: number; cls: string }[] = [
+    { label: 'Calories', now: totals.kcal, aft: after.kcal, g: goal.kcal,
+      cls: kcalR > 1.1 ? 'text-over' : kcalR >= 0.9 ? 'text-grind' : 'text-carbs' },
+    { label: 'Protein', now: totals.protein, aft: after.protein, g: goal.protein,
+      cls: after.protein >= goal.protein ? 'text-grind' : after.protein >= goal.protein * 0.8 ? 'text-carbs' : 'text-bone' },
+    { label: 'Carbs', now: totals.carbs, aft: after.carbs, g: goal.carbs, cls: flexCls },
+    { label: 'Fat', now: totals.fat, aft: after.fat, g: goal.fat, cls: flexCls },
   ]
   return (
     <div className="space-y-1 rounded-lg border border-edge bg-ink p-3">
       <div className="text-[10px] font-semibold uppercase tracking-wider text-mist">After adding</div>
-      {rows.map(([label, now, aft, g, cls]) => (
+      {rows.map(({ label, now, aft, g, cls }) => (
         <div key={label} className="flex items-center justify-between text-xs">
           <span className="text-mist">{label}</span>
           <span className="tabular-nums text-mist">
@@ -603,7 +634,7 @@ function MacroImpact({ totals, goal, add }) {
   )
 }
 
-export function MealPicker({ meal, setMeal }) {
+export function MealPicker({ meal, setMeal }: { meal: MealId | null; setMeal: (m: MealId | null) => void }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {MEALS.map((m) => (
@@ -624,15 +655,27 @@ export function MealPicker({ meal, setMeal }) {
   )
 }
 
-function AddFood({ foods, addFood, bumpUsed, totals, goal, onAdd, onClose }) {
-  const [mode, setMode] = useState('library')
-  const [meal, setMeal] = useState(defaultMealNow())
-  const addWithMeal = (entry) => onAdd({ ...entry, meal })
+interface AddFoodProps {
+  foods: Food[]
+  addFood: FoodsApi['addFood']
+  bumpUsed: (f: Food) => void
+  totals: Macros
+  goal: Macros
+  onAdd: (entry: Entry) => void
+  onClose: () => void
+}
+
+function AddFood({ foods, addFood, bumpUsed, totals, goal, onAdd, onClose }: AddFoodProps) {
+  const [mode, setMode] = useState<'library' | 'quick'>('library')
+  const [meal, setMeal] = useState<MealId | null>(defaultMealNow())
+  const addWithMeal = (entry: Entry) => onAdd({ ...entry, meal })
+
+  const TABS: ['library' | 'quick', string][] = [['library', 'My foods'], ['quick', 'Quick add']]
 
   return (
     <Modal title="Add food" onClose={onClose}>
       <div className="mb-3 flex gap-1 rounded-full border border-edge bg-ink p-1">
-        {[['library', 'My foods'], ['quick', 'Quick add']].map(([m, label]) => (
+        {TABS.map(([m, label]) => (
           <button
             key={m}
             onClick={() => setMode(m)}
@@ -655,22 +698,22 @@ function AddFood({ foods, addFood, bumpUsed, totals, goal, onAdd, onClose }) {
 }
 
 // frecency: usage count decayed by ~3%/day since last use (half-life ≈ 3 weeks)
-const frecency = (f) => {
+const frecency = (f: Food): number => {
   if (!f.used) return 0
   const days = f.lastUsed ? (Date.now() - f.lastUsed) / 86400000 : 30
   return f.used * Math.pow(0.97, days)
 }
 
-const matchRank = (name, q) => {
+const matchRank = (name: string, q: string): number => {
   const n = name.toLowerCase()
   if (n.startsWith(q)) return 0
   if (n.split(/\s+/).some((w) => w.startsWith(q))) return 1
   return 2
 }
 
-function FromLibrary({ foods, bumpUsed, totals, goal, onAdd, onClose }) {
+function FromLibrary({ foods, bumpUsed, totals, goal, onAdd, onClose }: Omit<AddFoodProps, 'addFood'>) {
   const [search, setSearch] = useState('')
-  const [picked, setPicked] = useState(null)
+  const [picked, setPicked] = useState<Food | null>(null)
   const [grams, setGrams] = useState('')
 
   const filtered = useMemo(() => {
@@ -691,7 +734,7 @@ function FromLibrary({ foods, bumpUsed, totals, goal, onAdd, onClose }) {
     [foods],
   )
 
-  const pick = (f) => {
+  const pick = (f: Food) => {
     setPicked(f)
     setGrams(isPer100(f.unit) ? (f.serving ? String(f.serving) : '100') : '1')
   }
@@ -799,17 +842,18 @@ function FromLibrary({ foods, bumpUsed, totals, goal, onAdd, onClose }) {
   )
 }
 
-function QuickAdd({ addFood, totals, goal, onAdd, onClose }) {
+function QuickAdd({ addFood, totals, goal, onAdd, onClose }: Omit<AddFoodProps, 'foods' | 'bumpUsed'>) {
   const [f, setF] = useState({ name: '', kcal: '', protein: '', carbs: '', fat: '' })
   const [saveToLibrary, setSaveToLibrary] = useState(false)
   const [alcohol, setAlcohol] = useState(false)
   const [alcoholG, setAlcoholG] = useState('')
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
-  const valid = f.name.trim() && Number(f.kcal) >= 0 && f.kcal !== ''
+  const set = (k: keyof typeof f) =>
+    (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
+  const valid = Boolean(f.name.trim()) && Number(f.kcal) >= 0 && f.kcal !== ''
 
   const submit = () => {
     if (!valid) return
-    const entry = {
+    const entry: Entry = {
       id: crypto.randomUUID(),
       name: f.name.trim(),
       amount: null,

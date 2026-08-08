@@ -1,9 +1,17 @@
-import { Component } from 'react'
+import { Component, type ReactNode } from 'react'
 
-export default class ErrorBoundary extends Component {
-  state = { error: null }
+interface Props {
+  children: ReactNode
+}
 
-  static getDerivedStateFromError(error) {
+interface State {
+  error: Error | null
+}
+
+export default class ErrorBoundary extends Component<Props, State> {
+  state: State = { error: null }
+
+  static getDerivedStateFromError(error: Error): State {
     return { error }
   }
 

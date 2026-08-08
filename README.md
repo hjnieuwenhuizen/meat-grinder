@@ -8,6 +8,7 @@ A dark, fast, opinionated macro & calorie tracker — built as a coach, not a fo
 
 [**Live app →**](https://meat-grinder-88722.web.app)
 
+![TypeScript](https://img.shields.io/badge/TypeScript-0b0f0d?logo=typescript&logoColor=35e07c)
 ![React](https://img.shields.io/badge/React_19-0b0f0d?logo=react&logoColor=35e07c)
 ![Vite](https://img.shields.io/badge/Vite_7-0b0f0d?logo=vite&logoColor=35e07c)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_v4-0b0f0d?logo=tailwindcss&logoColor=35e07c)
@@ -58,6 +59,7 @@ Add to home screen, auto-updating, safe-area aware, built mobile-first.
 
 | Layer | Choice |
 |---|---|
+| Language | TypeScript (strict) — app and Cloud Functions |
 | UI | React 19, Tailwind CSS v4, custom dark theme |
 | Build | Vite 7 + `vite-plugin-pwa` (auto-updating service worker) |
 | Auth | Firebase Auth (Google sign-in) |
@@ -65,7 +67,7 @@ Add to home screen, auto-updating, safe-area aware, built mobile-first.
 | Backend | Cloud Functions v2 (scheduled Garmin sync + callables) |
 | Hosting | Firebase Hosting |
 
-**No state library, no component kit, no CSS framework beyond Tailwind.** ~15 source files.
+**No state library, no component kit, no CSS framework beyond Tailwind.** ~15 source files, one shared type model ([`src/types.ts`](src/types.ts)).
 
 ## Data model
 

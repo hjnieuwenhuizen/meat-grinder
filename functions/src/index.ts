@@ -1,25 +1,56 @@
 // Day boundaries are fixed to Africa/Johannesburg for now (single-market app).
 process.env.TZ = 'Africa/Johannesburg'
 
-const { onSchedule } = require('firebase-functions/v2/scheduler')
-const { onCall, HttpsError } = require('firebase-functions/v2/https')
-const { logger } = require('firebase-functions')
-const { initializeApp } = require('firebase-admin/app')
-const { getFirestore } = require('firebase-admin/firestore')
-const { getAuth } = require('firebase-admin/auth')
-const crypto = require('crypto')
-const { GarminConnect } = require('garmin-connect')
+import { onSchedule } from 'firebase-functions/v2/scheduler'
+import { onCall, HttpsError } from 'firebase-functions/v2/https'
+import { logger } from 'firebase-functions'
+import { initializeApp } from 'firebase-admin/app'
+import { getFirestore } from 'firebase-admin/firestore'
+import { getAuth } from 'firebase-admin/auth'
+import * as crypto from 'crypto'
+import { GarminConnect } from 'garmin-connect'
 
 initializeApp()
 const db = getFirestore()
 
 const REGION = 'europe-west1'
 
-const tokensRef = (uid) => db.doc(`users/${uid}/meta/garminTokens`)
-const statusRef = (uid) => db.doc(`users/${uid}/meta/garmin`)
-const registryRef = (uid) => db.doc(`garminUsers/${uid}`)
+type MealId = 'breakfast' | 'snack1' | 'lunch' | 'snack2' | 'supper' | 'snack3'
+type WorkoutTypeId = 'push' | 'legs' | 'pull' | 'run' | 'other'
 
-const keyOf = (d) => {
+interface Workout {
+  id: string
+  garminId?: number
+  type: WorkoutTypeId
+  duration: number | null
+  kcal: number | null
+  distance: number | null
+  when: 'before' | 'after'
+  meal: MealId
+}
+
+interface DayDoc {
+  training: boolean
+  entries: unknown[]
+  workouts: Workout[]
+  sleep?: number | null
+}
+
+interface GarminActivity {
+  activityId: number
+  activityName?: string
+  activityType?: { typeKey?: string }
+  startTimeLocal?: string
+  duration?: number
+  calories?: number
+  distance?: number
+}
+
+const tokensRef = (uid: string) => db.doc(`users/${uid}/meta/garminTokens`)
+const statusRef = (uid: string) => db.doc(`users/${uid}/meta/garmin`)
+const registryRef = (uid: string) => db.doc(`garminUsers/${uid}`)
+
+const keyOf = (d: Date): string => {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
@@ -27,7 +58,7 @@ const keyOf = (d) => {
 }
 
 // same slot boundaries as the app's defaultMealNow()
-const slotFor = (hour) => {
+const slotFor = (hour: number): MealId => {
   if (hour < 10.5) return 'breakfast'
   if (hour < 12) return 'snack1'
   if (hour < 14.5) return 'lunch'
@@ -38,7 +69,7 @@ const slotFor = (hour) => {
 
 // map Garmin activity to the app's workout types; strength sessions named
 // "push"/"pull"/"legs" in Garmin land on the right day type
-const mapType = (act) => {
+const mapType = (act: GarminActivity): WorkoutTypeId => {
   const key = act.activityType?.typeKey ?? ''
   const name = (act.activityName ?? '').toLowerCase()
   if (key.includes('running') || key.includes('treadmill')) return 'run'
@@ -48,17 +79,17 @@ const mapType = (act) => {
   return 'other'
 }
 
-async function clientFor(uid) {
+async function clientFor(uid: string): Promise<GarminConnect> {
   const snap = await tokensRef(uid).get()
   if (!snap.exists) throw new HttpsError('failed-precondition', 'Garmin is not connected.')
-  const { oauth1, oauth2 } = snap.data()
+  const { oauth1, oauth2 } = snap.data() as { oauth1: never; oauth2: never }
   // credentials are never stored — token refresh is handled via oauth1
   const client = new GarminConnect({ username: 'unused', password: 'unused' })
   client.loadToken(oauth1, oauth2)
   return client
 }
 
-async function syncUser(uid) {
+async function syncUser(uid: string): Promise<string> {
   const client = await clientFor(uid)
   const settings = (await db.doc(`users/${uid}/meta/settings`).get()).data() ?? {}
 
@@ -72,14 +103,14 @@ async function syncUser(uid) {
     return keyOf(d)
   })
 
-  const dayCache = {}
-  const loadDay = async (key) => {
+  const dayCache: Record<string, DayDoc & { _dirty: boolean }> = {}
+  const loadDay = async (key: string) => {
     if (!dayCache[key]) {
       const snap = await db.doc(`users/${uid}/days/${key}`).get()
-      dayCache[key] = snap.exists
-        ? { training: false, entries: [], workouts: [], ...snap.data() }
+      const base: DayDoc = snap.exists
+        ? { training: false, entries: [], workouts: [], ...(snap.data() as Partial<DayDoc>) }
         : { training: false, entries: [], workouts: [] }
-      dayCache[key]._dirty = false
+      dayCache[key] = { ...base, _dirty: false }
     }
     return dayCache[key]
   }
@@ -100,12 +131,12 @@ async function syncUser(uid) {
         sleepSet++
       }
     } catch (e) {
-      logger.info(`${uid} no sleep data for ${key}: ${e.message}`)
+      logger.info(`${uid} no sleep data for ${key}: ${(e as Error).message}`)
     }
   }
 
   // activities: last 30, keep the ones in the window, dedupe by garminId
-  const acts = await client.getActivities(0, 30)
+  const acts = (await client.getActivities(0, 30)) as GarminActivity[]
   for (const act of acts ?? []) {
     const start = act.startTimeLocal // "2026-08-08 17:23:00"
     if (!start) continue
@@ -127,7 +158,7 @@ async function syncUser(uid) {
       when: 'before',
       meal: slotFor(hour),
     })
-    if (settings.trainingEnabled) day.training = true
+    if ((settings as { trainingEnabled?: boolean }).trainingEnabled) day.training = true
     day._dirty = true
     workoutsAdded++
   }
@@ -135,6 +166,7 @@ async function syncUser(uid) {
   for (const [key, day] of Object.entries(dayCache)) {
     if (!day._dirty) continue
     const { _dirty, ...data } = day
+    void _dirty
     await db.doc(`users/${uid}/days/${key}`).set(data)
   }
 
@@ -151,8 +183,8 @@ async function syncUser(uid) {
   return summary
 }
 
-const friendly = (e) => {
-  const msg = e?.message ?? String(e)
+const friendly = (e: unknown): HttpsError => {
+  const msg = e instanceof Error ? e.message : String(e)
   if (msg.includes('429') || msg.toLowerCase().includes('rate limit')) {
     return new HttpsError(
       'resource-exhausted',
@@ -166,51 +198,61 @@ const friendly = (e) => {
 }
 
 // Connect: login once with email+password (discarded) OR accept pre-made tokens.
-exports.garminConnect = onCall({ region: REGION, memory: '256MiB', timeoutSeconds: 120 }, async (req) => {
-  const uid = req.auth?.uid
-  if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
-  const { email, password, tokens } = req.data ?? {}
-
-  const client = new GarminConnect({ username: email ?? 'unused', password: password ?? 'unused' })
-  try {
-    if (tokens?.oauth1 && tokens?.oauth2) {
-      client.loadToken(tokens.oauth1, tokens.oauth2)
-    } else if (email && password) {
-      await client.login()
-    } else {
-      throw new HttpsError('invalid-argument', 'Provide email + password, or tokens.')
+export const garminConnect = onCall(
+  { region: REGION, memory: '256MiB', timeoutSeconds: 120 },
+  async (req) => {
+    const uid = req.auth?.uid
+    if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
+    const { email, password, tokens } = (req.data ?? {}) as {
+      email?: string
+      password?: string
+      tokens?: { oauth1?: never; oauth2?: never }
     }
-    await client.getUserProfile() // verify the session actually works
-  } catch (e) {
-    if (e instanceof HttpsError) throw e
-    throw friendly(e)
-  }
 
-  const t = client.exportToken()
-  await tokensRef(uid).set({ oauth1: t.oauth1, oauth2: t.oauth2 })
-  await registryRef(uid).set({ enabled: true })
-  await statusRef(uid).set({ connected: true, connectedAt: Date.now(), lastError: null }, { merge: true })
+    const client = new GarminConnect({ username: email ?? 'unused', password: password ?? 'unused' })
+    try {
+      if (tokens?.oauth1 && tokens?.oauth2) {
+        client.loadToken(tokens.oauth1, tokens.oauth2)
+      } else if (email && password) {
+        await client.login()
+      } else {
+        throw new HttpsError('invalid-argument', 'Provide email + password, or tokens.')
+      }
+      await client.getUserProfile() // verify the session actually works
+    } catch (e) {
+      if (e instanceof HttpsError) throw e
+      throw friendly(e)
+    }
 
-  try {
-    return { ok: true, summary: await syncUser(uid) }
-  } catch (e) {
-    logger.warn(`First sync after connect failed for ${uid}`, e)
-    return { ok: true, summary: 'connected — first sync will run shortly' }
-  }
-})
+    const t = client.exportToken()
+    await tokensRef(uid).set({ oauth1: t.oauth1, oauth2: t.oauth2 })
+    await registryRef(uid).set({ enabled: true })
+    await statusRef(uid).set({ connected: true, connectedAt: Date.now(), lastError: null }, { merge: true })
 
-exports.garminSyncUser = onCall({ region: REGION, memory: '256MiB', timeoutSeconds: 300 }, async (req) => {
-  const uid = req.auth?.uid
-  if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
-  try {
-    return { ok: true, summary: await syncUser(uid) }
-  } catch (e) {
-    if (e instanceof HttpsError) throw e
-    throw friendly(e)
-  }
-})
+    try {
+      return { ok: true, summary: await syncUser(uid) }
+    } catch (e) {
+      logger.warn(`First sync after connect failed for ${uid}`, e)
+      return { ok: true, summary: 'connected — first sync will run shortly' }
+    }
+  },
+)
 
-exports.garminDisconnect = onCall({ region: REGION }, async (req) => {
+export const garminSyncUser = onCall(
+  { region: REGION, memory: '256MiB', timeoutSeconds: 300 },
+  async (req) => {
+    const uid = req.auth?.uid
+    if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
+    try {
+      return { ok: true, summary: await syncUser(uid) }
+    } catch (e) {
+      if (e instanceof HttpsError) throw e
+      throw friendly(e)
+    }
+  },
+)
+
+export const garminDisconnect = onCall({ region: REGION }, async (req) => {
   const uid = req.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
   await tokensRef(uid).delete()
@@ -219,7 +261,7 @@ exports.garminDisconnect = onCall({ region: REGION }, async (req) => {
   return { ok: true }
 })
 
-exports.garminSync = onSchedule(
+export const garminSync = onSchedule(
   { schedule: 'every 3 hours', timeZone: 'Africa/Johannesburg', region: REGION, memory: '256MiB', timeoutSeconds: 540 },
   async () => {
     // one-time migration from the single-user era
@@ -229,7 +271,7 @@ exports.garminSync = onSchedule(
       if (reg.empty) {
         const { users } = await getAuth().listUsers(2)
         if (users[0]) {
-          await tokensRef(users[0].uid).set(legacy.data())
+          await tokensRef(users[0].uid).set(legacy.data()!)
           await registryRef(users[0].uid).set({ enabled: true })
           await statusRef(users[0].uid).set({ connected: true }, { merge: true })
           logger.info(`Migrated legacy Garmin tokens to ${users[0].uid}`)
@@ -244,8 +286,9 @@ exports.garminSync = onSchedule(
       try {
         await syncUser(uid)
       } catch (e) {
-        logger.warn(`Sync failed for ${uid}: ${e.message}`)
-        await statusRef(uid).set({ lastError: e.message, lastErrorAt: Date.now() }, { merge: true })
+        const msg = e instanceof Error ? e.message : String(e)
+        logger.warn(`Sync failed for ${uid}: ${msg}`)
+        await statusRef(uid).set({ lastError: msg, lastErrorAt: Date.now() }, { merge: true })
       }
     }
   },

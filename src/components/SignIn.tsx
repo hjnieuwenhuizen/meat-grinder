@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { signIn } from '../lib/firebase'
 
 export default function SignIn() {
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center px-6">
@@ -15,7 +15,7 @@ export default function SignIn() {
       </div>
 
       <button
-        onClick={() => signIn().catch((e) => setError(e.message))}
+        onClick={() => signIn().catch((e: Error) => setError(e.message))}
         className="flex items-center gap-3 rounded-full bg-grind px-6 py-3 font-semibold text-ink transition hover:brightness-110"
       >
         <svg viewBox="0 0 24 24" className="size-5" fill="currentColor">

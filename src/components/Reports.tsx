@@ -1,18 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { fmtAmount } from '../lib/units'
 import { workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { fetchDays, totalsOf, goalFor } from '../hooks/useData'
 import { todayKey, addDays, startOfWeek, weekKeys, monthKeys, fromKey, fmtDay, fmtMonth } from '../lib/dates'
 import { rangeReport } from '../lib/llm'
 import { CopyButton, Panel, ChevronLeft, ChevronRight } from './ui'
+import type { DayDoc, Settings } from '../types'
 
-export default function Reports({ uid, settings }) {
-  const [mode, setMode] = useState('week')
+type Mode = 'week' | 'month'
+
+export default function Reports({ uid, settings }: { uid: string; settings: Settings }) {
+  const [mode, setMode] = useState<Mode>('week')
+  const MODES: [Mode, string][] = [['week', 'Weekly'], ['month', 'Monthly']]
 
   return (
     <div className="space-y-4">
       <div className="flex gap-1 rounded-full border border-edge bg-panel p-1">
-        {[['week', 'Weekly'], ['month', 'Monthly']].map(([m, label]) => (
+        {MODES.map(([m, label]) => (
           <button
             key={m}
             onClick={() => setMode(m)}
@@ -29,10 +33,10 @@ export default function Reports({ uid, settings }) {
   )
 }
 
-function RangeView({ uid, settings, mode }) {
+function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; mode: Mode }) {
   const [anchor, setAnchor] = useState(todayKey())
-  const [days, setDays] = useState(null)
-  const [open, setOpen] = useState({})
+  const [days, setDays] = useState<Record<string, DayDoc> | null>(null)
+  const [open, setOpen] = useState<Record<string, boolean>>({})
 
   const { keys, title } = useMemo(() => {
     if (mode === 'week') {
@@ -53,7 +57,7 @@ function RangeView({ uid, settings, mode }) {
     return () => { live = false }
   }, [uid, keys])
 
-  const shift = (dir) => {
+  const shift = (dir: number) => {
     if (mode === 'week') return setAnchor(addDays(startOfWeek(anchor), dir * 7))
     const d = fromKey(anchor)
     d.setDate(1)
@@ -62,14 +66,22 @@ function RangeView({ uid, settings, mode }) {
   }
 
   const logged = days ? keys.filter((k) => days[k]?.entries?.length) : []
-  const avg = logged.length
-    ? logged.reduce((a, k) => {
-        const t = totalsOf(days[k])
-        return { kcal: a.kcal + t.kcal / logged.length, protein: a.protein + t.protein / logged.length, carbs: a.carbs + t.carbs / logged.length, fat: a.fat + t.fat / logged.length }
-      }, { kcal: 0, protein: 0, carbs: 0, fat: 0 })
+  const avg = logged.length && days
+    ? logged.reduce(
+        (a, k) => {
+          const t = totalsOf(days[k])
+          return {
+            kcal: a.kcal + t.kcal / logged.length,
+            protein: a.protein + t.protein / logged.length,
+            carbs: a.carbs + t.carbs / logged.length,
+            fat: a.fat + t.fat / logged.length,
+          }
+        },
+        { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+      )
     : null
 
-  const hitsOf = (k) => {
+  const hitsOf = (k: string): { protein: boolean; kcal: boolean } | null => {
     const day = days?.[k]
     if (!day?.entries?.length) return null
     const g = goalFor(settings, day)
@@ -80,14 +92,20 @@ function RangeView({ uid, settings, mode }) {
     }
   }
 
-  const allHits = logged.map(hitsOf)
   const compliance = logged.length
-    ? Math.round((allHits.reduce((n, h) => n + h.protein + h.kcal, 0) / (logged.length * 2)) * 100)
+    ? Math.round(
+        (logged
+          .map(hitsOf)
+          .reduce((n, h) => n + (h ? Number(h.protein) + Number(h.kcal) : 0), 0) /
+          (logged.length * 2)) * 100,
+      )
     : null
 
   const maxKcal = days
     ? Math.max(settings.rest.kcal, settings.training.kcal, ...keys.map((k) => totalsOf(days[k]).kcal))
     : 1
+
+  const HITS: [('protein' | 'kcal'), string][] = [['protein', 'Protein'], ['kcal', 'Calories']]
 
   return (
     <div className="space-y-4">
@@ -123,7 +141,7 @@ function RangeView({ uid, settings, mode }) {
               value={(() => {
                 const slept = keys.filter((k) => days[k]?.sleep)
                 if (!slept.length) return '—'
-                return `${Math.round((slept.reduce((s, k) => s + days[k].sleep, 0) / slept.length) * 10) / 10}h`
+                return `${Math.round((slept.reduce((s, k) => s + (days[k].sleep ?? 0), 0) / slept.length) * 10) / 10}h`
               })()}
             />
             <Stat label="Compliance" value={compliance === null ? '—' : `${compliance}%`} sub="protein + kcal hits" />
@@ -137,7 +155,7 @@ function RangeView({ uid, settings, mode }) {
                 <span className="w-16 text-xs text-mist">Training</span>
                 <div className="flex flex-1 gap-1">
                   {keys.map((k) => {
-                    const trained = days[k]?.workouts?.length > 0
+                    const trained = (days[k]?.workouts?.length ?? 0) > 0
                     const future = k > todayKey()
                     return (
                       <div
@@ -153,7 +171,7 @@ function RangeView({ uid, settings, mode }) {
                   })}
                 </div>
               </div>
-              {[['protein', 'Protein'], ['kcal', 'Calories']].map(([hk, label]) => (
+              {HITS.map(([hk, label]) => (
                 <div key={hk} className="flex items-center gap-2 py-1">
                   <span className="w-16 text-xs text-mist">{label}</span>
                   <div className="flex flex-1 gap-1">
@@ -240,7 +258,7 @@ function RangeView({ uid, settings, mode }) {
                   >
                     <span className="w-20 font-medium">
                       {fmtDay(k)}
-                      {day?.workouts?.length > 0 && <span className="ml-1.5 text-[10px]">🏋️</span>}
+                      {(day?.workouts?.length ?? 0) > 0 && <span className="ml-1.5 text-[10px]">🏋️</span>}
                       {settings.trainingEnabled && day?.training && <span className="ml-1.5 text-[10px] text-grind">T</span>}
                     </span>
                     {empty ? (
@@ -289,7 +307,7 @@ function RangeView({ uid, settings, mode }) {
   )
 }
 
-const Stat = ({ label, value, sub }) => (
+const Stat = ({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) => (
   <Panel className="p-4">
     <div className="text-xs font-medium uppercase tracking-wider text-mist">{label}</div>
     <div className="mt-1 text-2xl font-bold tabular-nums">{value}</div>
@@ -297,7 +315,7 @@ const Stat = ({ label, value, sub }) => (
   </Panel>
 )
 
-const Legend = ({ color, label }) => (
+const Legend = ({ color, label }: { color: string; label: string }) => (
   <span className="flex items-center gap-1.5">
     <span className="size-2 rounded-full" style={{ background: color }} /> {label}
   </span>

@@ -2,24 +2,26 @@
 
 ## What this is
 
-A macro/calorie tracker PWA. React 19 + Vite + Tailwind v4 on Firebase (Google auth, Firestore, Hosting, Cloud Functions). Single deployed instance at https://meat-grinder-88722.web.app.
+A macro/calorie tracker PWA. **TypeScript**, React 19 + Vite + Tailwind v4 on Firebase (Google auth, Firestore, Hosting, Cloud Functions). Single deployed instance at https://meat-grinder-88722.web.app.
 
 ## Commands
 
 ```bash
 npm run dev                      # dev server (port 5173)
-npm run build                    # production build → dist/
+npm run typecheck                # tsc --noEmit
+npm run build                    # typecheck + production build → dist/
 firebase deploy --only hosting   # ship the app
-firebase deploy --only functions # ship Garmin sync (functions/)
+firebase deploy --only functions # ship Garmin sync (functions/src, tsc runs on predeploy)
 firebase deploy --only firestore:rules
 ```
 
 ## Architecture in 30 seconds
 
-- `src/hooks/useData.js` — all Firestore access. Day docs at `users/{uid}/days/{yyyy-mm-dd}` hold `entries[]` (food), `workouts[]`, `training`, `sleep`. Foods at `users/{uid}/foods/{id}`, goals at `users/{uid}/meta/settings`.
+- `src/types.ts` — the data model (`Food`, `Entry`, `Workout`, `DayDoc`, `Settings`). Start here.
+- `src/hooks/useData.ts` — all Firestore access. Day docs at `users/{uid}/days/{yyyy-mm-dd}` hold `entries[]` (food), `workouts[]`, `training`, `sleep`. Foods at `users/{uid}/foods/{id}`, goals at `users/{uid}/meta/settings`.
 - Entries are **denormalized**: macros are baked into each entry at log time. Editing a food never rewrites history.
-- `src/lib/` — pure helpers: `units.js` (g/ml per-100 vs scoop/unit per-1), `meals.js` (meal slots), `workouts.js`, `llm.js` (Copy-for-LLM report builders), `dates.js`.
-- `functions/index.js` — Garmin sync. Per-user tokens in `users/{uid}/meta/garminTokens`, registry in `garminUsers/{uid}`, scheduled every 3h + callables (`garminConnect`, `garminSyncUser`, `garminDisconnect`).
+- `src/lib/` — pure helpers: `units.ts` (g/ml per-100 vs scoop/unit per-1), `meals.ts` (meal slots), `workouts.ts`, `llm.ts` (Copy-for-LLM report builders), `dates.ts`.
+- `functions/src/index.ts` — Garmin sync. Per-user tokens in `users/{uid}/meta/garminTokens`, registry in `garminUsers/{uid}`, scheduled every 3h + callables (`garminConnect`, `garminSyncUser`, `garminDisconnect`). Compiled to `functions/lib/` on deploy.
 
 ## Product rules — do not violate
 
@@ -32,6 +34,7 @@ firebase deploy --only firestore:rules
 
 ## Engineering rules
 
+- TypeScript strict mode, no `any`. Types live in `src/types.ts` — extend them there, never inline duplicate shapes.
 - Keep it simple. No new dependencies without strong justification; no state libraries, no CSS frameworks beyond Tailwind, no backend beyond the existing functions.
 - Dark theme only. Use the tokens in `src/index.css` (`ink/panel/raise/edge/mist/bone/grind/protein/carbs/fat/over`) — never hardcode hex in components.
 - Hooks before early returns — this codebase shipped a blank-screen bug from a `useMemo` after an early `return`. Don't repeat it.

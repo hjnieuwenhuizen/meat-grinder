@@ -3,16 +3,18 @@ import { fmtAmount } from './units'
 import { MEALS } from './meals'
 import { workoutTitle, workoutDetails } from './workouts'
 import { totalsOf, goalFor } from '../hooks/useData'
+import type { DayDoc, Macros, Settings } from '../types'
 
-const r = (n) => Math.round(n * 10) / 10
-const line = (t) => `${Math.round(t.kcal)} kcal | P ${r(t.protein)}g | C ${r(t.carbs)}g | F ${r(t.fat)}g`
+const r = (n: number) => Math.round(n * 10) / 10
+const line = (t: Macros) =>
+  `${Math.round(t.kcal)} kcal | P ${r(t.protein)}g | C ${r(t.carbs)}g | F ${r(t.fat)}g`
 
-export function dayReport(key, day, settings) {
+export function dayReport(key: string, day: DayDoc, settings: Settings): string {
   const goal = goalFor(settings, day)
   const totals = totalsOf(day)
   const tag = settings.trainingEnabled ? (day.training ? ' — Training day' : ' — Rest day') : ''
 
-  const known = new Set(MEALS.map((m) => m.id))
+  const known = new Set<string>(MEALS.map((m) => m.id))
   const workouts = day.workouts ?? []
   const groups = [
     ...MEALS.map((m) => ({
@@ -22,8 +24,8 @@ export function dayReport(key, day, settings) {
     })),
     {
       label: 'Unsorted',
-      entries: day.entries.filter((e) => !known.has(e.meal)),
-      workouts: workouts.filter((w) => !known.has(w.meal)),
+      entries: day.entries.filter((e) => !known.has(e.meal ?? '')),
+      workouts: workouts.filter((w) => !known.has(w.meal ?? '')),
     },
   ].filter((g) => g.entries.length || g.workouts.length)
 
@@ -53,7 +55,7 @@ export function dayReport(key, day, settings) {
       fat: goal.fat - totals.fat,
     })}`,
     ...(() => {
-      const extra = []
+      const extra: string[] = []
       if (day.sleep) extra.push(`Sleep last night: ${day.sleep}h`)
       const booze = day.entries.filter((e) => e.alcohol)
       const shame = booze.reduce((s, e) => s + e.kcal, 0)
@@ -67,7 +69,12 @@ export function dayReport(key, day, settings) {
   ].join('\n')
 }
 
-export function rangeReport(title, keys, daysByKey, settings) {
+export function rangeReport(
+  title: string,
+  keys: string[],
+  daysByKey: Record<string, DayDoc>,
+  settings: Settings,
+): string {
   const logged = keys.filter((k) => daysByKey[k]?.entries?.length)
 
   const rows = keys.flatMap((k) => {
@@ -92,13 +99,16 @@ export function rangeReport(title, keys, daysByKey, settings) {
 
   let avg = 'No days logged.'
   if (logged.length) {
-    const sum = logged.reduce((a, k) => {
-      const t = totalsOf(daysByKey[k])
-      return {
-        kcal: a.kcal + t.kcal, protein: a.protein + t.protein,
-        carbs: a.carbs + t.carbs, fat: a.fat + t.fat,
-      }
-    }, { kcal: 0, protein: 0, carbs: 0, fat: 0 })
+    const sum = logged.reduce(
+      (a, k) => {
+        const t = totalsOf(daysByKey[k])
+        return {
+          kcal: a.kcal + t.kcal, protein: a.protein + t.protein,
+          carbs: a.carbs + t.carbs, fat: a.fat + t.fat,
+        }
+      },
+      { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+    )
     const n = logged.length
     avg = `Average over ${n} logged day${n > 1 ? 's' : ''}: ${line({
       kcal: sum.kcal / n, protein: sum.protein / n, carbs: sum.carbs / n, fat: sum.fat / n,

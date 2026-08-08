@@ -1,27 +1,38 @@
 import { useState } from 'react'
 import { useGarmin } from '../hooks/useGarmin'
 import { CopyButton, Field, Panel } from './ui'
+import type { Macros, Settings } from '../types'
 
-const FIELDS = [
+type MacroKey = keyof Macros
+// while editing, goal fields hold raw input strings
+type GoalDraft = Record<MacroKey, string | number>
+
+const FIELDS: [MacroKey, string][] = [
   ['kcal', 'Calories'],
   ['protein', 'Protein (g)'],
   ['carbs', 'Carbs (g)'],
   ['fat', 'Fat (g)'],
 ]
 
-export default function Goals({ uid, settings, save }) {
-  const [form, setForm] = useState({
+export default function Goals({ uid, settings, save }: {
+  uid: string
+  settings: Settings
+  save: (s: Settings) => void
+}) {
+  const [form, setForm] = useState<{ trainingEnabled: boolean; rest: GoalDraft; training: GoalDraft }>({
     trainingEnabled: settings.trainingEnabled,
     rest: { ...settings.rest },
     training: { ...settings.training },
   })
   const [saved, setSaved] = useState(false)
 
-  const setGoal = (which, key) => (e) =>
-    setForm({ ...form, [which]: { ...form[which], [key]: e.target.value } })
+  const setGoal = (which: 'rest' | 'training', key: MacroKey) =>
+    (e: React.ChangeEvent<HTMLInputElement>) =>
+      setForm({ ...form, [which]: { ...form[which], [key]: e.target.value } })
 
   const submit = () => {
-    const clean = (g) => Object.fromEntries(FIELDS.map(([k]) => [k, Number(g[k]) || 0]))
+    const clean = (g: GoalDraft): Macros =>
+      Object.fromEntries(FIELDS.map(([k]) => [k, Number(g[k]) || 0])) as unknown as Macros
     save({
       trainingEnabled: form.trainingEnabled,
       rest: clean(form.rest),
@@ -32,7 +43,7 @@ export default function Goals({ uid, settings, save }) {
   }
 
   const copyText = () => {
-    const line = (g) => `${g.kcal} kcal | P ${g.protein}g | C ${g.carbs}g | F ${g.fat}g`
+    const line = (g: GoalDraft) => `${g.kcal} kcal | P ${g.protein}g | C ${g.carbs}g | F ${g.fat}g`
     return form.trainingEnabled
       ? `# Meat Grinder — Goals\nRest day: ${line(form.rest)}\nTraining day: ${line(form.training)}`
       : `# Meat Grinder — Goals\nDaily: ${line(form.rest)}`
@@ -85,23 +96,24 @@ export default function Goals({ uid, settings, save }) {
   )
 }
 
-function GarminPanel({ uid }) {
+function GarminPanel({ uid }: { uid: string }) {
   const { status, connect, connectTokens, syncNow, disconnect } = useGarmin(uid)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tokenJson, setTokenJson] = useState('')
   const [advanced, setAdvanced] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState(null)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const run = async (fn, okMsg) => {
+  const run = async (fn: () => Promise<unknown>, okMsg?: string) => {
     setBusy(true)
     setMsg(null)
     try {
-      const res = await fn()
+      const res = (await fn()) as { data?: { summary?: string } } | undefined
       setMsg({ ok: true, text: okMsg ?? res?.data?.summary ?? 'Done' })
     } catch (e) {
-      setMsg({ ok: false, text: e.message?.replace(/^.*?:\s*/, '') || 'Failed' })
+      const message = e instanceof Error ? e.message : String(e)
+      setMsg({ ok: false, text: message.replace(/^.*?:\s*/, '') || 'Failed' })
     } finally {
       setBusy(false)
     }
@@ -128,7 +140,11 @@ function GarminPanel({ uid }) {
           <div className="flex gap-2">
             <button
               type="button" disabled={busy}
-              onClick={() => run(() => syncNow().then((r) => { setMsg({ ok: true, text: `Synced: ${r.data.summary}` }); return r }), undefined)}
+              onClick={() => run(async () => {
+                const r = await syncNow()
+                setMsg({ ok: true, text: `Synced: ${r.data.summary}` })
+                return r
+              })}
               className="flex-1 rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
             >
               {busy ? 'Syncing…' : 'Sync now'}
@@ -151,7 +167,11 @@ function GarminPanel({ uid }) {
           </p>
           <button
             type="button" disabled={busy || !email || !password}
-            onClick={() => run(() => connect(email, password).then((r) => { setPassword(''); return r }))}
+            onClick={() => run(async () => {
+              const r = await connect(email, password)
+              setPassword('')
+              return r
+            })}
             className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
           >
             {busy ? 'Connecting…' : 'Connect Garmin'}
@@ -191,7 +211,11 @@ function GarminPanel({ uid }) {
   )
 }
 
-function GoalGrid({ title, goal, onChange }) {
+function GoalGrid({ title, goal, onChange }: {
+  title: string
+  goal: GoalDraft
+  onChange: (k: MacroKey) => (e: React.ChangeEvent<HTMLInputElement>) => void
+}) {
   return (
     <div>
       <div className="mb-3 text-xs font-medium uppercase tracking-wider text-grind">{title}</div>
