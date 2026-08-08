@@ -4,14 +4,16 @@ process.env.TZ = 'Africa/Johannesburg'
 import { onSchedule } from 'firebase-functions/v2/scheduler'
 import { onCall, HttpsError } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions'
-import { initializeApp } from 'firebase-admin/app'
+import { getApps, initializeApp } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
 import * as crypto from 'crypto'
 import { GarminConnect } from 'garmin-connect'
 
-initializeApp()
+if (!getApps().length) initializeApp()
 const db = getFirestore()
+
+export { mcp, mcpKeyGenerate, mcpKeyRevoke } from './mcp.js'
 
 const REGION = 'europe-west1'
 

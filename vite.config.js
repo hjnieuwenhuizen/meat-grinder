@@ -11,8 +11,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon.png'],
       workbox: {
-        // never serve stale HTML for auth callbacks
-        navigateFallbackDenylist: [/^\/__\//],
+        // never serve stale HTML for auth callbacks or the MCP endpoint
+        navigateFallbackDenylist: [/^\/__\//, /^\/mcp\//],
       },
       manifest: {
         name: 'Meat Grinder',

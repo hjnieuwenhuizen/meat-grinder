@@ -76,6 +76,11 @@ export interface DayDoc {
   garmin?: GarminDay
 }
 
+export interface McpConfig {
+  key: string
+  createdAt?: number
+}
+
 export interface GarminStatus {
   connected: boolean
   /** credentials saved, waiting for Garmin to stop rate-limiting our IP */

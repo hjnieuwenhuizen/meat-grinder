@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useGarmin } from '../hooks/useGarmin'
+import { useMcp } from '../hooks/useMcp'
 import { CopyButton, Field, Panel } from './ui'
 import type { Macros, Settings } from '../types'
 
@@ -23,7 +24,79 @@ export default function Goals({ uid, settings, save }: {
     <div className="max-w-lg space-y-4">
       <GoalsForm settings={settings} save={save} />
       <GarminPanel uid={uid} />
+      <McpPanel uid={uid} />
     </div>
+  )
+}
+
+function McpPanel({ uid }: { uid: string }) {
+  const { config, generate, revoke } = useMcp(uid)
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  if (config === undefined) return null
+  const url = config ? `${location.origin}/mcp/${config.key}` : null
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true)
+    try { await fn() } finally { setBusy(false) }
+  }
+
+  return (
+    <Panel className="p-5">
+      <div className="mb-1 font-medium">🤖 LLM connection (MCP)</div>
+      <p className="mb-4 text-xs text-mist">
+        Lets an AI assistant read your diary live — goals, meals, workouts, sleep, steps, heart rate.
+        Read-only. The URL below is a secret: anyone who has it can read your data, so treat it like a password.
+      </p>
+
+      {url ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-lg border border-edge bg-ink px-3 py-2 text-xs text-bone">{url}</code>
+            <button
+              type="button"
+              onClick={async () => {
+                await navigator.clipboard.writeText(url)
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              }}
+              className="shrink-0 rounded-full bg-grind px-4 py-2 text-sm font-semibold text-ink transition hover:brightness-110"
+            >
+              {copied ? 'Copied ✓' : 'Copy'}
+            </button>
+          </div>
+          <p className="text-[11px] leading-snug text-mist">
+            In Claude: Settings → Connectors → Add custom connector → paste this URL.
+            Then ask things like "how's my protein trending this month?"
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button" disabled={busy}
+              onClick={() => act(generate)}
+              className="rounded-full border border-edge px-4 py-2 text-sm font-medium text-mist hover:text-bone disabled:opacity-40"
+            >
+              Regenerate (invalidates old URL)
+            </button>
+            <button
+              type="button" disabled={busy}
+              onClick={() => act(revoke)}
+              className="rounded-full border border-edge px-4 py-2 text-sm font-medium text-mist hover:text-over disabled:opacity-40"
+            >
+              Revoke
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button" disabled={busy}
+          onClick={() => act(generate)}
+          className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
+        >
+          {busy ? 'Generating…' : 'Generate connection URL'}
+        </button>
+      )}
+    </Panel>
   )
 }
 
