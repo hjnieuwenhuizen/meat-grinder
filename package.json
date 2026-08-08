@@ -19,6 +19,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^4.6.0",
+    "garmin-connect": "^1.6.2",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",

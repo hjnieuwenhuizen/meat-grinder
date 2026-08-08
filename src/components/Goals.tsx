@@ -131,7 +131,22 @@ function GarminPanel({ uid }: { uid: string }) {
         Pulls sleep and workouts automatically every 3 hours. Burned calories are never added to your budget.
       </p>
 
-      {status.connected ? (
+      {status.pending && !status.connected ? (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-carbs/40 bg-carbs/10 p-3 text-xs text-carbs">
+            Connection saved. Garmin is rate-limiting our server right now — we retry automatically
+            every few hours and your password is deleted the moment login succeeds. Nothing more to do.
+          </div>
+          {status.lastError && <p className="text-xs text-mist">{status.lastError}</p>}
+          <button
+            type="button" disabled={busy}
+            onClick={() => run(disconnect, 'Cancelled')}
+            className="rounded-full border border-edge px-4 py-2 text-sm font-medium text-mist hover:text-over"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : status.connected ? (
         <div className="space-y-3">
           <div className="text-xs text-mist">
             {status.lastSync ? `Last sync: ${new Date(status.lastSync).toLocaleString()} — ${status.lastResult ?? ''}` : 'First sync pending…'}
@@ -163,7 +178,9 @@ function GarminPanel({ uid }: { uid: string }) {
           <Field label="Garmin email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
           <Field label="Garmin password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           <p className="text-[11px] leading-snug text-mist">
-            Used once to sign in to Garmin — your password is never stored, only the resulting session tokens.
+            Used to sign in to Garmin once. If Garmin is rate-limiting, your login is kept in your private
+            account data and retried automatically — it's deleted the moment the connection succeeds; only
+            session tokens are kept after that.
           </p>
           <button
             type="button" disabled={busy || !email || !password}
@@ -182,9 +199,12 @@ function GarminPanel({ uid }: { uid: string }) {
           </button>
           {advanced && (
             <div className="space-y-2">
-              <p className="text-[11px] text-mist">
-                If Garmin rate-limits the server, run <code className="text-bone">node functions/bootstrap.js</code> locally (from the repo) and paste the JSON here.
-              </p>
+              <div className="space-y-1 text-[11px] leading-snug text-mist">
+                <p>Garmin blocks our server sometimes, but never your own computer. On any PC with <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-grind underline underline-offset-2">Node.js</a>:</p>
+                <p>1. <a href="/garmin-token.mjs" download className="text-grind underline underline-offset-2">Download the token script</a> into a new folder.</p>
+                <p>2. In a terminal in that folder: <code className="text-bone">npm i garmin-connect</code> then <code className="text-bone">node garmin-token.mjs</code></p>
+                <p>3. It prints a line of JSON — paste it here:</p>
+              </div>
               <textarea
                 value={tokenJson}
                 onChange={(e) => setTokenJson(e.target.value)}

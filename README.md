@@ -122,7 +122,7 @@ firebase deploy --only hosting,firestore:rules     # live
 firebase deploy --only functions
 ```
 
-Users connect Garmin in-app (Settings → Garmin). If Garmin rate-limits logins from cloud IPs, `node functions/bootstrap.js` generates session tokens locally to paste into the app's Advanced option.
+Users connect Garmin in-app (Settings → Garmin). Garmin rate-limits logins from cloud IPs, so a rejected connect is saved and retried automatically every sync cycle (credentials are deleted the moment login succeeds). Impatient users can generate tokens locally instead — the app serves a script at `/garmin-token.mjs` (also at [public/garmin-token.mjs](public/garmin-token.mjs)) whose output pastes into Settings → Garmin → Advanced.
 
 ## Design notes
 

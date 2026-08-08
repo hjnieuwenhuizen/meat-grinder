@@ -49,6 +49,8 @@ interface GarminActivity {
 const tokensRef = (uid: string) => db.doc(`users/${uid}/meta/garminTokens`)
 const statusRef = (uid: string) => db.doc(`users/${uid}/meta/garmin`)
 const registryRef = (uid: string) => db.doc(`garminUsers/${uid}`)
+// credentials parked here ONLY while Garmin rate-limits our IP; deleted on first successful login
+const pendingRef = (uid: string) => db.doc(`users/${uid}/meta/garminPending`)
 
 const keyOf = (d: Date): string => {
   const y = d.getFullYear()
@@ -183,6 +185,58 @@ async function syncUser(uid: string): Promise<string> {
   return summary
 }
 
+const isRateLimit = (e: unknown): boolean => {
+  const msg = e instanceof Error ? e.message : String(e)
+  return msg.includes('429') || msg.toLowerCase().includes('rate limit')
+}
+
+const isBadLogin = (e: unknown): boolean => {
+  const msg = e instanceof Error ? e.message : String(e)
+  return msg.includes('401') || msg.includes('403') || msg.toLowerCase().includes('unauthorized')
+}
+
+// try to log in with parked credentials; returns true when connected
+async function tryPendingLogin(uid: string): Promise<boolean> {
+  const snap = await pendingRef(uid).get()
+  if (!snap.exists) return false
+  const { email, password } = snap.data() as { email: string; password: string }
+
+  const client = new GarminConnect({ username: email, password })
+  try {
+    await client.login()
+    await client.getUserProfile()
+  } catch (e) {
+    if (isRateLimit(e)) {
+      await statusRef(uid).set(
+        { pending: true, lastError: 'Garmin is still rate-limiting the server — retrying automatically.' },
+        { merge: true },
+      )
+      return false
+    }
+    if (isBadLogin(e)) {
+      // wrong credentials: stop retrying, make the user re-enter them
+      await pendingRef(uid).delete()
+      await registryRef(uid).delete()
+      await statusRef(uid).set(
+        { pending: false, connected: false, lastError: 'Garmin rejected the login — check your email and password and connect again.' },
+        { merge: true },
+      )
+      return false
+    }
+    throw e
+  }
+
+  const t = client.exportToken()
+  await tokensRef(uid).set({ oauth1: t.oauth1, oauth2: t.oauth2 })
+  await pendingRef(uid).delete()
+  await statusRef(uid).set(
+    { connected: true, pending: false, connectedAt: Date.now(), lastError: null },
+    { merge: true },
+  )
+  logger.info(`Pending Garmin login succeeded for ${uid}`)
+  return true
+}
+
 const friendly = (e: unknown): HttpsError => {
   const msg = e instanceof Error ? e.message : String(e)
   if (msg.includes('429') || msg.toLowerCase().includes('rate limit')) {
@@ -221,6 +275,21 @@ export const garminConnect = onCall(
       await client.getUserProfile() // verify the session actually works
     } catch (e) {
       if (e instanceof HttpsError) throw e
+      // Garmin blocks logins from cloud IPs intermittently — park the
+      // credentials and let the scheduled sync keep retrying until it works.
+      if (isRateLimit(e) && email && password) {
+        await pendingRef(uid).set({ email, password, savedAt: Date.now() })
+        await registryRef(uid).set({ enabled: true })
+        await statusRef(uid).set(
+          { connected: false, pending: true, lastError: null },
+          { merge: true },
+        )
+        return {
+          ok: true,
+          pending: true,
+          summary: 'Garmin is rate-limiting right now — connection saved, retrying automatically.',
+        }
+      }
       throw friendly(e)
     }
 
@@ -256,8 +325,9 @@ export const garminDisconnect = onCall({ region: REGION }, async (req) => {
   const uid = req.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
   await tokensRef(uid).delete()
+  await pendingRef(uid).delete()
   await registryRef(uid).delete()
-  await statusRef(uid).set({ connected: false }, { merge: true })
+  await statusRef(uid).set({ connected: false, pending: false }, { merge: true })
   return { ok: true }
 })
 
@@ -284,6 +354,11 @@ export const garminSync = onSchedule(
     logger.info(`Garmin sync for ${uids.length} user(s)`)
     for (const uid of uids) {
       try {
+        // users whose login was rate-limited at connect time: retry it first
+        if (!(await tokensRef(uid).get()).exists) {
+          const ok = await tryPendingLogin(uid)
+          if (!ok) continue
+        }
         await syncUser(uid)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)

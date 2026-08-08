@@ -66,6 +66,8 @@ export interface DayDoc {
 
 export interface GarminStatus {
   connected: boolean
+  /** credentials saved, waiting for Garmin to stop rate-limiting our IP */
+  pending?: boolean
   connectedAt?: number
   lastSync?: number
   lastResult?: string

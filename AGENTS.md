@@ -46,7 +46,7 @@ firebase deploy --only firestore:rules
 
 ## Do not
 
-- Do not store Garmin (or any) passwords — the connect flow exchanges credentials for tokens server-side and discards them.
+- Do not store Garmin (or any) passwords beyond the pending-connect flow: credentials may sit in `users/{uid}/meta/garminPending` (owner-only) while Garmin rate-limits our IP, and MUST be deleted on the first successful login or on bad credentials. Never widen this.
 - Do not commit secrets or personal deployment config. Firebase web config comes from `.env.local` (gitignored, template in `.env.example`); `.firebaserc` is gitignored — never hardcode project ids in source.
 - Do not add weight tracking, AI coaching, or activity-based carb presets without being asked — considered and deliberately deferred.
 - Do not loosen Firestore rules: user data is owner-only (`request.auth.uid == uid`).
