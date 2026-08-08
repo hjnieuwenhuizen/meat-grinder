@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "21326285887",
+    "project_id": "meat-grinder-88722",
+    "storage_bucket": "meat-grinder-88722.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:21326285887:android:a47b9c1f6384fbc2f37c8a",
+        "android_client_info": {
+          "package_name": "com.meatgrinder.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "21326285887-ajpi5aavld4hibmuvc0q06hidnldphut.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.meatgrinder.app",
+            "certificate_hash": "6e5205d002d2d71c9e1b03d10c806ee32b3b27a8"
+          }
+        },
+        {
+          "client_id": "21326285887-mbptafblst5gpg8dus1ka9fhqqt7aj3m.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBnodCwnASyKC8hFMO0fwH2FLHpd0guAxI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "21326285887-mbptafblst5gpg8dus1ka9fhqqt7aj3m.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
