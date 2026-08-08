@@ -109,6 +109,12 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
       minutes: w.duration ?? null,
       kcalBurned: w.kcal ?? null,
       distanceKm: w.distance ?? null,
+      avgHeartRate: (w as { avgHr?: number | null }).avgHr ?? null,
+      maxHeartRate: (w as { maxHr?: number | null }).maxHr ?? null,
+      paceMinPerKm: (w as { paceMinKm?: number | null }).paceMinKm ?? null,
+      speedKmh: (w as { speedKmh?: number | null }).speedKmh ?? null,
+      elevationGainM: (w as { elevM?: number | null }).elevM ?? null,
+      runCadenceSpm: (w as { cadence?: number | null }).cadence ?? null,
       slot: w.meal ?? null,
       when: w.when ?? null,
     })),
@@ -211,6 +217,124 @@ const foodUpdate = async (uid: string, id: string, input: Record<string, unknown
   return { ok: true, id, changes }
 }
 
+/* ---------- diary write: log a food eaten today (or a given date) ---------- */
+
+const MEAL_IDS = ['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3']
+
+const slotForNow = (): string => {
+  const now = new Date()
+  const h = now.getHours() + now.getMinutes() / 60
+  if (h < 10.5) return 'breakfast'
+  if (h < 12) return 'snack1'
+  if (h < 14.5) return 'lunch'
+  if (h < 17) return 'snack2'
+  if (h < 20.5) return 'supper'
+  return 'snack3'
+}
+
+const localDateKey = (): string => {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+interface LogFoodInput {
+  foodId?: string
+  amount?: number
+  name?: string
+  kcal?: number
+  protein?: number
+  carbs?: number
+  fat?: number
+  alcohol?: boolean
+  alcoholG?: number
+  meal?: string
+  date?: string
+}
+
+const logFood = async (uid: string, input: LogFoodInput) => {
+  const date = input.date && DATE_RX.test(input.date) ? input.date : localDateKey()
+  const meal = input.meal && MEAL_IDS.includes(input.meal) ? input.meal : slotForNow()
+
+  let entry: Entry & { id: string; amount: number | null; unit: string | null; meal: string; alcoholG: number | null }
+
+  if (input.foodId) {
+    // stored library food: scale macros by amount in the food's own basis
+    const snap = await db.doc(`users/${uid}/foods/${input.foodId}`).get()
+    if (!snap.exists) throw new Error(`No library food with id ${input.foodId} — use searchFoods first`)
+    const food = snap.data() as {
+      name: string; unit?: string; serving?: number | null
+      kcal: number; protein: number; carbs: number; fat: number
+      alcohol?: boolean; alcoholG?: number | null; used?: number
+    }
+    const per100 = !food.unit || food.unit === 'g' || food.unit === 'ml'
+    const amount = input.amount && input.amount > 0 ? input.amount : per100 ? food.serving ?? 100 : 1
+    const scale = per100 ? amount / 100 : amount
+    entry = {
+      id: crypto.randomUUID(),
+      name: food.name,
+      amount,
+      unit: food.unit ?? 'g',
+      meal,
+      alcohol: Boolean(food.alcohol),
+      alcoholG: food.alcohol && food.alcoholG ? Math.round(food.alcoholG * scale * 10) / 10 : null,
+      kcal: food.kcal * scale,
+      protein: food.protein * scale,
+      carbs: food.carbs * scale,
+      fat: food.fat * scale,
+    }
+    await snap.ref.update({ used: (food.used ?? 0) + 1, lastUsed: Date.now() })
+  } else {
+    // one-off: direct totals for what was actually eaten
+    if (!input.name?.trim()) throw new Error('Provide foodId (library) or name + kcal (one-off)')
+    if (input.kcal === undefined) throw new Error('kcal is required for a one-off food')
+    entry = {
+      id: crypto.randomUUID(),
+      name: input.name.trim().slice(0, 100),
+      amount: input.amount && input.amount > 0 ? input.amount : null,
+      unit: input.amount && input.amount > 0 ? 'g' : null,
+      meal,
+      alcohol: Boolean(input.alcohol),
+      alcoholG: input.alcohol && input.alcoholG ? Math.max(0, input.alcoholG) : null,
+      kcal: Math.max(0, Number(input.kcal) || 0),
+      protein: Math.max(0, Number(input.protein) || 0),
+      carbs: Math.max(0, Number(input.carbs) || 0),
+      fat: Math.max(0, Number(input.fat) || 0),
+    }
+  }
+
+  const dayRef = db.doc(`users/${uid}/days/${date}`)
+  const daySnap = await dayRef.get()
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...(daySnap.data() as Partial<DayDoc>) }
+  day.entries = [...day.entries, entry]
+  await dayRef.set(day)
+
+  const settings = await loadSettings(uid)
+  const trainingEnabled = Boolean((settings as { trainingEnabled?: boolean }).trainingEnabled)
+  const goal = (trainingEnabled && day.training
+    ? (settings as { training?: Macros }).training
+    : (settings as { rest?: Macros }).rest) as Macros | undefined
+  const totals = round(totalsOf(day.entries))
+
+  return {
+    ok: true,
+    date,
+    logged: { ...entry, ...round(entry) },
+    totals,
+    goal: goal ?? null,
+    remaining: goal
+      ? round({
+          kcal: goal.kcal - totals.kcal,
+          protein: goal.protein - totals.protein,
+          carbs: goal.carbs - totals.carbs,
+          fat: goal.fat - totals.fat,
+        })
+      : null,
+  }
+}
+
 const uidForKey = async (key: string | undefined | null): Promise<string | null> => {
   if (!key || !/^[a-f0-9]{48}$/.test(key)) return null
   const snap = await db.doc(`mcpKeys/${key}`).get()
@@ -278,6 +402,27 @@ function buildServer(uid: string): McpServer {
       inputSchema: { name: z.string().min(1), ...foodFields, kcal: z.number().min(0) },
     },
     async (input) => text(await foodCreate(uid, input as Record<string, unknown>)),
+  )
+
+  server.registerTool(
+    'log_food',
+    {
+      description: "Log something the user ate into today's diary (or a given date). Two modes: pass foodId (from search_foods) + amount in the food's own basis (grams/ml for per-100 foods, scoops/units otherwise), OR pass name + kcal (+ protein/carbs/fat) for a one-off. Returns the updated day totals and remaining budget.",
+      inputSchema: {
+        foodId: z.string().optional().describe('Library food id from search_foods'),
+        amount: z.number().positive().optional().describe('Amount in the food basis; defaults to the food serving / 100g / 1 unit'),
+        name: z.string().min(1).optional().describe('One-off mode: what was eaten'),
+        kcal: z.number().min(0).optional().describe('One-off mode: total calories eaten'),
+        protein: z.number().min(0).optional().describe('grams'),
+        carbs: z.number().min(0).optional().describe('grams'),
+        fat: z.number().min(0).optional().describe('grams'),
+        alcohol: z.boolean().optional(),
+        alcoholG: z.number().min(0).optional().describe('grams of pure alcohol'),
+        meal: z.enum(['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3']).optional().describe('Meal slot; defaults to the slot matching the current time'),
+        date: z.string().regex(DATE_RX).optional().describe('YYYY-MM-DD, defaults to today'),
+      },
+    },
+    async (input) => text(await logFood(uid, input as LogFoodInput)),
   )
 
   server.registerTool(
@@ -493,6 +638,55 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/log': {
+      post: {
+        operationId: 'logFood',
+        summary: "Log something the user ate into today's diary (or a given date). Pass foodId (from searchFoods) + amount in the food's basis, OR name + kcal (+ macros) for a one-off. Returns updated totals and remaining budget.",
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  foodId: { type: 'string', description: 'Library food id from searchFoods (library mode)' },
+                  amount: { type: 'number', description: "Amount in the food's basis: grams/ml for per-100 foods, scoops/units otherwise. Defaults to serving / 100 / 1" },
+                  name: { type: 'string', description: 'One-off mode: what was eaten' },
+                  kcal: { type: 'number', description: 'One-off mode: total calories eaten (required for one-off)' },
+                  protein: { type: 'number', description: 'grams' },
+                  carbs: { type: 'number', description: 'grams' },
+                  fat: { type: 'number', description: 'grams' },
+                  alcohol: { type: 'boolean' },
+                  alcoholG: { type: 'number', description: 'grams of pure alcohol' },
+                  meal: { type: 'string', enum: ['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3'], description: 'Defaults to the slot matching the current time' },
+                  date: { type: 'string', description: 'YYYY-MM-DD, defaults to today' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Logged entry + updated day totals',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' },
+                    date: { type: 'string' },
+                    logged: { type: 'object', properties: { name: { type: 'string' }, mealSlot: { type: 'string' }, ...MACROS_SCHEMA.properties } },
+                    totals: MACROS_SCHEMA,
+                    goal: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+                    remaining: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/foods': {
       post: {
         operationId: 'addFood',
@@ -628,7 +822,13 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
   const foodIdMatch = path.match(/^\/foods\/([A-Za-z0-9]+)$/)
 
   try {
-    if (req.method === 'POST' && path === '/foods') {
+    if (req.method === 'POST' && path === '/log') {
+      try {
+        res.json(await logFood(uid, body as LogFoodInput))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'POST' && path === '/foods') {
       try {
         res.json(await foodCreate(uid, body))
       } catch (e) {
