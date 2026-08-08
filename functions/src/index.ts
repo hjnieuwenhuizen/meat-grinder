@@ -336,8 +336,9 @@ export const garminConnect = onCall(
 
     const t = client.exportToken()
     await tokensRef(uid).set({ oauth1: t.oauth1, oauth2: t.oauth2 })
+    await pendingRef(uid).delete() // a token connect supersedes any queued password retry
     await registryRef(uid).set({ enabled: true })
-    await statusRef(uid).set({ connected: true, connectedAt: Date.now(), lastError: null }, { merge: true })
+    await statusRef(uid).set({ connected: true, pending: false, connectedAt: Date.now(), lastError: null }, { merge: true })
 
     try {
       return { ok: true, summary: await syncUser(uid) }

@@ -128,6 +128,44 @@ function GarminPanel({ uid }: { uid: string }) {
 
   if (!status) return null
 
+  const tokenForm = (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (busy || !tokenJson.trim()) return
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(tokenJson)
+        } catch {
+          setMsg({ ok: false, text: "That doesn't look like token JSON — paste the exact line the script printed." })
+          return
+        }
+        run(() => connectTokens(parsed))
+      }}
+      className="space-y-2"
+    >
+      <div className="space-y-1 text-[11px] leading-snug text-mist">
+        <p>Garmin sometimes blocks logins from servers, but never from your own computer. On any PC with <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-grind underline underline-offset-2">Node.js</a> installed:</p>
+        <p>1. <a href="/garmin-token.mjs" download className="text-grind underline underline-offset-2">Download the token script</a> into a new folder.</p>
+        <p>2. In a terminal in that folder: <code className="text-bone">npm i garmin-connect</code> then <code className="text-bone">node garmin-token.mjs</code></p>
+        <p>3. It asks for your Garmin login (stays on your PC) and prints a line of JSON — paste it here:</p>
+      </div>
+      <textarea
+        value={tokenJson}
+        onChange={(e) => setTokenJson(e.target.value)}
+        rows={3}
+        placeholder='{"oauth1":…,"oauth2":…}'
+        className="w-full rounded-lg border border-edge bg-ink px-3 py-2 font-mono text-xs text-bone outline-none focus:border-grind/60"
+      />
+      <button
+        type="submit" disabled={busy || !tokenJson.trim()}
+        className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
+      >
+        {busy ? 'Connecting…' : 'Connect with token'}
+      </button>
+    </form>
+  )
+
   return (
     <Panel className="p-5">
       <div className="mb-1 flex items-center justify-between">
@@ -152,6 +190,10 @@ function GarminPanel({ uid }: { uid: string }) {
           >
             Cancel
           </button>
+          <div className="border-t border-edge pt-3">
+            <p className="mb-2 text-xs font-medium text-bone">Don't want to wait? Connect with a token instead:</p>
+            {tokenForm}
+          </div>
         </div>
       ) : status.connected ? (
         <div className="space-y-3">
@@ -226,41 +268,7 @@ function GarminPanel({ uid }: { uid: string }) {
               </button>
             </form>
           ) : (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (busy || !tokenJson.trim()) return
-                let parsed: unknown
-                try {
-                  parsed = JSON.parse(tokenJson)
-                } catch {
-                  setMsg({ ok: false, text: "That doesn't look like token JSON — paste the exact line the script printed." })
-                  return
-                }
-                run(() => connectTokens(parsed))
-              }}
-              className="space-y-2"
-            >
-              <div className="space-y-1 text-[11px] leading-snug text-mist">
-                <p>Garmin sometimes blocks logins from servers, but never from your own computer. On any PC with <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-grind underline underline-offset-2">Node.js</a> installed:</p>
-                <p>1. <a href="/garmin-token.mjs" download className="text-grind underline underline-offset-2">Download the token script</a> into a new folder.</p>
-                <p>2. In a terminal in that folder: <code className="text-bone">npm i garmin-connect</code> then <code className="text-bone">node garmin-token.mjs</code></p>
-                <p>3. It asks for your Garmin login (stays on your PC) and prints a line of JSON — paste it here:</p>
-              </div>
-              <textarea
-                value={tokenJson}
-                onChange={(e) => setTokenJson(e.target.value)}
-                rows={3}
-                placeholder='{"oauth1":…,"oauth2":…}'
-                className="w-full rounded-lg border border-edge bg-ink px-3 py-2 font-mono text-xs text-bone outline-none focus:border-grind/60"
-              />
-              <button
-                type="submit" disabled={busy || !tokenJson.trim()}
-                className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
-              >
-                {busy ? 'Connecting…' : 'Connect with token'}
-              </button>
-            </form>
+            tokenForm
           )}
         </div>
       )}
