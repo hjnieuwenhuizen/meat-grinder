@@ -13,7 +13,7 @@ import { GarminConnect } from 'garmin-connect'
 if (!getApps().length) initializeApp()
 const db = getFirestore()
 
-export { mcp, mcpKeyGenerate, mcpKeyRevoke } from './mcp.js'
+export { mcp, api, mcpKeyGenerate, mcpKeyRevoke } from './mcp.js'
 
 const REGION = 'europe-west1'
 

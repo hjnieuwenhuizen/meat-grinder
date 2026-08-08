@@ -72,6 +72,7 @@ function McpPanel({ uid }: { uid: string }) {
             <p>Works with any MCP-capable AI assistant:</p>
             <p><b className="font-medium text-bone">Claude</b> — Settings → Connectors → Add custom connector → paste this URL.</p>
             <p><b className="font-medium text-bone">ChatGPT</b> — Settings → Apps &amp; Connectors → Advanced → enable Developer mode → Create connector → paste this URL (Plus/Pro).</p>
+            <p><b className="font-medium text-bone">Custom GPT (Actions)</b> — edit your GPT → Add Action → Import from URL: <code className="text-bone">{location.origin}/api/openapi.json</code> → Authentication: API Key, header <code className="text-bone">X-API-Key</code>, paste the key from this URL (the part after /mcp/).</p>
             <p><b className="font-medium text-bone">Claude Code / other tools</b> — add it as a remote MCP server URL.</p>
             <p>Then ask things like "how's my protein trending this month?"</p>
           </div>

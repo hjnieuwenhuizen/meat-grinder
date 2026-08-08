@@ -12,7 +12,7 @@ export default defineConfig({
       includeAssets: ['apple-touch-icon.png'],
       workbox: {
         // never serve stale HTML for auth callbacks or the MCP endpoint
-        navigateFallbackDenylist: [/^\/__\//, /^\/mcp\//],
+        navigateFallbackDenylist: [/^\/__\//, /^\/mcp\//, /^\/api\//],
       },
       manifest: {
         name: 'Meat Grinder',

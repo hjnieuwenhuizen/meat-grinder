@@ -1,6 +1,8 @@
-// MCP server — lets an LLM (Claude, etc.) query the user's diary live.
-// Auth: personal secret key in the URL path (/mcp/<key>), generated in
-// Settings. Key → uid lookup lives in the server-only `mcpKeys` collection.
+// LLM integrations — two doors into the same read-only data:
+//  1. MCP server (Streamable HTTP) for Claude / ChatGPT connectors: /mcp/<key>
+//  2. REST + OpenAPI for custom GPT "Actions": /api/* with X-API-Key header
+// Both authenticate with the personal key generated in Settings
+// (users/{uid}/meta/mcp, indexed server-side in `mcpKeys`).
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions'
 import { getApps, initializeApp } from 'firebase-admin/app'
@@ -14,6 +16,7 @@ if (!getApps().length) initializeApp()
 const db = getFirestore()
 
 const REGION = 'europe-west1'
+const DATE_RX = /^\d{4}-\d{2}-\d{2}$/
 
 interface Macros {
   kcal: number
@@ -68,6 +71,19 @@ const round = (m: Macros): Macros => ({
   fat: Math.round(m.fat * 10) / 10,
 })
 
+/* ---------- shared payload builders (used by MCP tools AND the REST api) ---------- */
+
+const loadDay = async (uid: string, date: string): Promise<DayDoc> => {
+  const snap = await db.doc(`users/${uid}/days/${date}`).get()
+  return { training: false, entries: [], workouts: [], ...(snap.data() as Partial<DayDoc> | undefined) }
+}
+
+const loadSettings = async (uid: string) =>
+  (await db.doc(`users/${uid}/meta/settings`).get()).data() ?? {
+    trainingEnabled: false,
+    rest: { kcal: 2200, protein: 180, carbs: 200, fat: 70 },
+  }
+
 const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>) => {
   const totals = round(totalsOf(day.entries))
   const trainingEnabled = Boolean(settings.trainingEnabled)
@@ -99,27 +115,73 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
   }
 }
 
-const text = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data, null, 1) }] })
+const goalsPayload = (uid: string) => loadSettings(uid)
 
-const DATE_RX = /^\d{4}-\d{2}-\d{2}$/
+const dayPayload = async (uid: string, date: string) => {
+  const [day, settings] = await Promise.all([loadDay(uid, date), loadSettings(uid)])
+  return {
+    ...daySummary(date, day, settings),
+    entries: day.entries.map((e) => ({
+      name: e.name,
+      amount: e.amount ?? e.grams ?? null,
+      unit: e.unit ?? (e.grams != null ? 'g' : null),
+      mealSlot: e.meal ?? null,
+      alcohol: e.alcohol ?? false,
+      ...round(e),
+    })),
+  }
+}
+
+const rangePayload = async (uid: string, start: string, end: string) => {
+  const snap = await db
+    .collection(`users/${uid}/days`)
+    .orderBy('__name__')
+    .startAt(start)
+    .endAt(end)
+    .limit(62)
+    .get()
+  const settings = await loadSettings(uid)
+  const days = snap.docs.map((d) =>
+    daySummary(d.id, { training: false, entries: [], workouts: [], ...(d.data() as Partial<DayDoc>) }, settings),
+  )
+  const logged = days.filter((d) => d.totals.kcal > 0)
+  const avg = logged.length
+    ? round({
+        kcal: logged.reduce((s, d) => s + d.totals.kcal, 0) / logged.length,
+        protein: logged.reduce((s, d) => s + d.totals.protein, 0) / logged.length,
+        carbs: logged.reduce((s, d) => s + d.totals.carbs, 0) / logged.length,
+        fat: logged.reduce((s, d) => s + d.totals.fat, 0) / logged.length,
+      })
+    : null
+  return { days, daysLogged: logged.length, averagesOverLoggedDays: avg }
+}
+
+const foodsPayload = async (uid: string, query: string) => {
+  const snap = await db.collection(`users/${uid}/foods`).orderBy('name').get()
+  const q = query.toLowerCase()
+  return snap.docs
+    .map((d) => d.data())
+    .filter((f) => String(f.name ?? '').toLowerCase().includes(q))
+    .slice(0, 30)
+}
+
+const uidForKey = async (key: string | undefined | null): Promise<string | null> => {
+  if (!key || !/^[a-f0-9]{48}$/.test(key)) return null
+  const snap = await db.doc(`mcpKeys/${key}`).get()
+  return snap.exists ? (snap.data() as { uid: string }).uid : null
+}
+
+/* ---------- MCP server ---------- */
+
+const text = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data, null, 1) }] })
 
 function buildServer(uid: string): McpServer {
   const server = new McpServer({ name: 'meat-grinder', version: '1.0.0' })
 
-  const loadDay = async (date: string): Promise<DayDoc> => {
-    const snap = await db.doc(`users/${uid}/days/${date}`).get()
-    return { training: false, entries: [], workouts: [], ...(snap.data() as Partial<DayDoc> | undefined) }
-  }
-  const loadSettings = async () =>
-    (await db.doc(`users/${uid}/meta/settings`).get()).data() ?? {
-      trainingEnabled: false,
-      rest: { kcal: 2200, protein: 180, carbs: 200, fat: 70 },
-    }
-
   server.registerTool(
     'get_goals',
     { description: "The user's daily macro goals (rest day and, if enabled, training day). Protein is a hard target; carbs/fat are flexible; exercise burn is never added back to the calorie budget." },
-    async () => text(await loadSettings()),
+    async () => text(await goalsPayload(uid)),
   )
 
   server.registerTool(
@@ -128,20 +190,7 @@ function buildServer(uid: string): McpServer {
       description: 'Full diary for one day: every food entry (with meal slot, amounts, macros, alcohol flags), workouts, sleep, steps, resting heart rate, totals and goals.',
       inputSchema: { date: z.string().regex(DATE_RX).describe('Date as YYYY-MM-DD') },
     },
-    async ({ date }) => {
-      const [day, settings] = await Promise.all([loadDay(date), loadSettings()])
-      return text({
-        ...daySummary(date, day, settings),
-        entries: day.entries.map((e) => ({
-          name: e.name,
-          amount: e.amount ?? e.grams ?? null,
-          unit: e.unit ?? (e.grams != null ? 'g' : null),
-          mealSlot: e.meal ?? null,
-          alcohol: e.alcohol ?? false,
-          ...round(e),
-        })),
-      })
-    },
+    async ({ date }) => text(await dayPayload(uid, date)),
   )
 
   server.registerTool(
@@ -153,29 +202,7 @@ function buildServer(uid: string): McpServer {
         end_date: z.string().regex(DATE_RX).describe('Last day, YYYY-MM-DD (inclusive)'),
       },
     },
-    async ({ start_date, end_date }) => {
-      const snap = await db
-        .collection(`users/${uid}/days`)
-        .orderBy('__name__')
-        .startAt(start_date)
-        .endAt(end_date)
-        .limit(62)
-        .get()
-      const settings = await loadSettings()
-      const days = snap.docs.map((d) =>
-        daySummary(d.id, { training: false, entries: [], workouts: [], ...(d.data() as Partial<DayDoc>) }, settings),
-      )
-      const logged = days.filter((d) => d.totals.kcal > 0)
-      const avg = logged.length
-        ? round({
-            kcal: logged.reduce((s, d) => s + d.totals.kcal, 0) / logged.length,
-            protein: logged.reduce((s, d) => s + d.totals.protein, 0) / logged.length,
-            carbs: logged.reduce((s, d) => s + d.totals.carbs, 0) / logged.length,
-            fat: logged.reduce((s, d) => s + d.totals.fat, 0) / logged.length,
-          })
-        : null
-      return text({ days, daysLogged: logged.length, averagesOverLoggedDays: avg })
-    },
+    async ({ start_date, end_date }) => text(await rangePayload(uid, start_date, end_date)),
   )
 
   server.registerTool(
@@ -184,15 +211,7 @@ function buildServer(uid: string): McpServer {
       description: "Search the user's personal food/drink library (macros per 100g/ml or per scoop/unit).",
       inputSchema: { query: z.string().describe('Case-insensitive substring of the food name; empty returns everything (max 30)') },
     },
-    async ({ query }) => {
-      const snap = await db.collection(`users/${uid}/foods`).orderBy('name').get()
-      const q = query.toLowerCase()
-      const foods = snap.docs
-        .map((d) => d.data())
-        .filter((f) => String(f.name ?? '').toLowerCase().includes(q))
-        .slice(0, 30)
-      return text(foods)
-    },
+    async ({ query }) => text(await foodsPayload(uid, query)),
   )
 
   return server
@@ -201,9 +220,7 @@ function buildServer(uid: string): McpServer {
 export const mcp = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds: 120 }, async (req, res) => {
   // key is the last path segment: /mcp/<key> (hosting rewrite) or /<key> (direct)
   const segments = req.path.split('/').filter((s) => s && s !== 'mcp')
-  const key = segments[segments.length - 1]
-  const keySnap = key && /^[a-f0-9]{48}$/.test(key) ? await db.doc(`mcpKeys/${key}`).get() : null
-  const uid = keySnap?.exists ? (keySnap.data() as { uid: string }).uid : null
+  const uid = await uidForKey(segments[segments.length - 1])
 
   if (!uid) {
     res.status(401).json({ error: 'Invalid or missing MCP key. Generate one in Meat Grinder → Settings.' })
@@ -240,6 +257,119 @@ export const mcp = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
     }
   }
 })
+
+/* ---------- REST + OpenAPI for custom GPT Actions ---------- */
+
+const openApiSchema = (host: string) => ({
+  openapi: '3.1.0',
+  info: {
+    title: 'Meat Grinder diary',
+    description:
+      "Read-only access to the user's nutrition diary. Protein is a hard daily target; carbs/fat are flexible against the calorie budget; exercise burn is never added back to the budget.",
+    version: '1.0.0',
+  },
+  servers: [{ url: `https://${host}/api` }],
+  security: [{ ApiKeyAuth: [] }],
+  components: {
+    securitySchemes: {
+      ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-API-Key' },
+    },
+  },
+  paths: {
+    '/goals': {
+      get: {
+        operationId: 'getGoals',
+        summary: 'Daily macro goals (rest + training day)',
+        responses: { '200': { description: 'Goals' } },
+      },
+    },
+    '/day': {
+      get: {
+        operationId: 'getDay',
+        summary: 'Full diary for one day: entries, workouts, sleep, steps, resting HR, totals, goals',
+        parameters: [
+          { name: 'date', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
+        ],
+        responses: { '200': { description: 'Day diary' } },
+      },
+    },
+    '/range': {
+      get: {
+        operationId: 'getRange',
+        summary: 'Per-day summaries and averages over a date range (max 62 days)',
+        parameters: [
+          { name: 'start', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
+          { name: 'end', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD inclusive' },
+        ],
+        responses: { '200': { description: 'Range summary' } },
+      },
+    },
+    '/foods': {
+      get: {
+        operationId: 'searchFoods',
+        summary: "Search the user's food/drink library",
+        parameters: [
+          { name: 'query', in: 'query', required: false, schema: { type: 'string' }, description: 'Substring of food name' },
+        ],
+        responses: { '200': { description: 'Foods' } },
+      },
+    },
+  },
+})
+
+export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds: 60 }, async (req, res) => {
+  const path = (req.path.startsWith('/api') ? req.path.slice(4) : req.path) || '/'
+
+  if (req.method !== 'GET') {
+    res.status(405).json({ error: 'GET only' })
+    return
+  }
+
+  // schema is public — it contains no data or secrets
+  if (path === '/openapi.json') {
+    // behind the hosting rewrite the original domain arrives via x-forwarded-host
+    const host = req.get('x-forwarded-host')?.split(',')[0].trim() || req.get('host') || 'localhost'
+    res.json(openApiSchema(host))
+    return
+  }
+
+  const headerKey = req.get('x-api-key') ?? req.get('authorization')?.replace(/^Bearer\s+/i, '')
+  const uid = await uidForKey(headerKey?.trim())
+  if (!uid) {
+    res.status(401).json({ error: 'Invalid or missing X-API-Key. Generate one in Meat Grinder → Settings.' })
+    return
+  }
+
+  try {
+    if (path === '/goals') {
+      res.json(await goalsPayload(uid))
+    } else if (path === '/day') {
+      const date = String(req.query.date ?? '')
+      if (!DATE_RX.test(date)) {
+        res.status(400).json({ error: 'date must be YYYY-MM-DD' })
+        return
+      }
+      res.json(await dayPayload(uid, date))
+    } else if (path === '/range') {
+      const start = String(req.query.start ?? '')
+      const end = String(req.query.end ?? '')
+      if (!DATE_RX.test(start) || !DATE_RX.test(end)) {
+        res.status(400).json({ error: 'start and end must be YYYY-MM-DD' })
+        return
+      }
+      res.json(await rangePayload(uid, start, end))
+    } else if (path === '/foods') {
+      res.json(await foodsPayload(uid, String(req.query.query ?? '')))
+    } else {
+      res.status(404).json({ error: 'Unknown endpoint. See /api/openapi.json' })
+    }
+  } catch (e) {
+    logger.error('REST api request failed', e)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/* ---------- key management ---------- */
 
 export const mcpKeyGenerate = onCall({ region: REGION }, async (req) => {
   const uid = req.auth?.uid

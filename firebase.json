@@ -4,6 +4,7 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       { "source": "/mcp/**", "function": { "functionId": "mcp", "region": "europe-west1" } },
+      { "source": "/api/**", "function": { "functionId": "api", "region": "europe-west1" } },
       { "source": "**", "destination": "/index.html" }
     ]
   },
