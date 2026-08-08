@@ -104,7 +104,7 @@ export function rangeReport(
     const booze = shame > 0 ? ` | alcohol ${Math.round(shame)} kcal${grams > 0 ? ` (${Math.round(grams)}g)` : ''}` : ''
     return [
       `- ${fmtDay(k)} (${k})${tag}: ${line(t)} (goal ${Math.round(goal.kcal)} kcal)${trained}${sleep}${wellness}${booze}`,
-      ...day.entries.map((e) => `  - ${e.name}${fmtAmount(e) ? ` (${fmtAmount(e)})` : ''}: ${line(e)}`),
+      ...day.entries.map((e) => `  - ${e.alcohol ? '[Alcohol] ' : ''}${e.name}${fmtAmount(e) ? ` (${fmtAmount(e)})` : ''}: ${line(e)}`),
     ]
   })
 

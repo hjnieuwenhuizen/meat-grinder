@@ -127,7 +127,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
       ) : (
         <>
           {/* summary stats */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="Avg kcal" value={avg ? Math.round(avg.kcal) : '—'} />
             <Stat label="Avg protein" value={avg ? `${Math.round(avg.protein)}g` : '—'} />
             <Stat label="Days logged" value={`${logged.length}/${keys.length}`} />
@@ -142,6 +142,22 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                 const slept = keys.filter((k) => days[k]?.sleep)
                 if (!slept.length) return '—'
                 return `${Math.round((slept.reduce((s, k) => s + (days[k].sleep ?? 0), 0) / slept.length) * 10) / 10}h`
+              })()}
+            />
+            <Stat
+              label="Avg steps"
+              value={(() => {
+                const days_ = keys.filter((k) => days[k]?.garmin?.steps)
+                if (!days_.length) return '—'
+                return Math.round(days_.reduce((s, k) => s + (days[k].garmin?.steps ?? 0), 0) / days_.length).toLocaleString()
+              })()}
+            />
+            <Stat
+              label="Avg resting HR"
+              value={(() => {
+                const days_ = keys.filter((k) => days[k]?.garmin?.restingHr)
+                if (!days_.length) return '—'
+                return `${Math.round(days_.reduce((s, k) => s + (days[k].garmin?.restingHr ?? 0), 0) / days_.length)} bpm`
               })()}
             />
             <Stat label="Compliance" value={compliance === null ? '—' : `${compliance}%`} sub="protein + kcal hits" />
@@ -279,6 +295,13 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                   </button>
                   {isOpen && !empty && (
                     <div className="space-y-1 bg-ink/40 px-4 pb-3 pt-1">
+                      {(day.sleep || day.garmin?.steps || day.garmin?.restingHr) && (
+                        <div className="flex items-center gap-3 text-xs text-mist">
+                          {day.sleep ? <span>😴 {day.sleep}h</span> : null}
+                          {day.garmin?.steps ? <span>👟 {day.garmin.steps.toLocaleString()}</span> : null}
+                          {day.garmin?.restingHr ? <span>❤️ {day.garmin.restingHr} bpm</span> : null}
+                        </div>
+                      )}
                       {(day.workouts ?? []).map((w) => (
                         <div key={w.id} className="flex items-center justify-between text-xs text-grind">
                           <span>{workoutType(w.type).icon} {workoutTitle(w)}</span>
