@@ -13,6 +13,8 @@ A dark, fast, opinionated macro & calorie tracker — built as a coach, not a fo
 ![Vite](https://img.shields.io/badge/Vite_7-0b0f0d?logo=vite&logoColor=35e07c)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_v4-0b0f0d?logo=tailwindcss&logoColor=35e07c)
 ![Firebase](https://img.shields.io/badge/Firebase-0b0f0d?logo=firebase&logoColor=35e07c)
+![Capacitor](https://img.shields.io/badge/Capacitor_8-0b0f0d?logo=capacitor&logoColor=35e07c)
+![MCP](https://img.shields.io/badge/MCP_server-0b0f0d?logoColor=35e07c)
 ![PWA](https://img.shields.io/badge/PWA-installable-0b0f0d?logo=pwa&logoColor=35e07c)
 
 </div>
@@ -31,29 +33,35 @@ And one hard rule: **exercise never buys food.** Burned calories are recorded, n
 
 ## Features
 
-### 🎯 Today — the command centre
+### 🎯 Diary — the command centre
 - Calorie hero with in-range band, macro rings, and **Today's Mission**: *"Eat 28g more protein. You have 315 kcal remaining."*
 - **Fix it** — the protein gap calculator. One tap shows exact portions from *your* foods that close the gap within your remaining calories: `300g chicken breast — +51g P, 264 kcal`. No math.
 - Live **"After adding"** preview while you log — see what any portion does to your day before committing.
-
-### 📔 A real daily diary
 - Meal slots (breakfast → evening snack) with per-meal macro subtotals, drag & drop between slots.
-- **Workouts in the timeline** — Push / Legs / Pull / Run with duration, kcal, distance, placed *before or after* the meal you trained around. Logging one flips the day to training goals.
-- **Sleep** — one field, done.
+- **Workouts in the timeline** — push/legs/pull, run, ride, swim, hike, stairs, cardio — with duration, kcal, distance, heart rate, pace, elevation, placed *before or after* the meal you trained around. Logging one flips the day to training goals.
+- **Sleep, steps, resting heart rate** — one line, synced or typed.
 - **Alcohol logged in red with 🍺.** It counts, it shows, no hiding. Tracks grams of pure alcohol per drink.
 
 ### ⌚ Garmin auto-sync
-Connect your Garmin account in settings — sleep and workouts appear automatically every 3 hours. Your password is exchanged for session tokens server-side and discarded; manual entries are never overwritten.
+Connect your Garmin account in Settings — workouts (with HR, pace, elevation, cadence), sleep, steps and resting heart rate appear automatically every 3 hours, plus a 30-day backfill button. Your password is exchanged for session tokens server-side and discarded; manual entries are never overwritten.
+
+### 📱 Android app + Samsung Health
+A thin Capacitor shell wraps the live web app (web deploys reach the installed app instantly) and adds native Google sign-in plus **Health Connect** steps sync — Samsung Health, Google Fit, any source. The APK builds in GitHub Actions; sideload it, no Play Store required.
+
+### 🏆 Compete
+Family leaderboards by invite code, an opt-in global board, and long-range challenges ("most steps Sep–Dec") across seven metrics. Scoring rewards *consistency against your own goals* — protein hits, in-range days, workouts, sleep, dry days — not who ate least.
+
+### 🤖 Bring your own AI coach
+- **MCP server** — connect Claude (or any MCP client) via a personal URL from Settings: it can read your goals, days, ranges and library live, log meals, and add/edit foods.
+- **GPT Actions API** — the same tools as REST + OpenAPI for custom GPTs (`/api/openapi.json`, keyed no-auth variant included). *"Log 2 scoops whey at lunch"* → done, with updated totals in the reply.
+- **Copy for LLM** — every view has a one-tap markdown export for any chat with no integrations.
 
 ### 📊 Reports that reward consistency
-- Weekly & monthly: averages, calories-vs-goal chart, expandable per-day food logs.
+- Weekly & monthly: averages (kcal, protein, sleep, steps, resting HR), calories-vs-goal chart, expandable per-day logs.
 - **Compliance grid** — ✓/✕ per day for protein and calories, plus a training row. Habit score, not scale drama.
 
-### 🤖 Copy for LLM
-Every view has a one-tap **Copy for LLM** button producing clean markdown — goals, totals, per-meal entries, workouts, sleep, alcohol. Paste into any AI chat and it becomes your nutrition coach with full context.
-
-### 📱 Installable PWA
-Add to home screen, auto-updating, safe-area aware, built mobile-first.
+### 📲 Installable PWA
+Add to home screen, auto-updating, safe-area aware, built mobile-first — with proper desktop layouts too.
 
 ## Stack
 
@@ -62,27 +70,31 @@ Add to home screen, auto-updating, safe-area aware, built mobile-first.
 | Language | TypeScript (strict) — app and Cloud Functions |
 | UI | React 19, Tailwind CSS v4, custom dark theme |
 | Build | Vite 7 + `vite-plugin-pwa` (auto-updating service worker) |
-| Auth | Firebase Auth (Google sign-in) |
+| Auth | Firebase Auth (Google sign-in; native account sheet in the Android shell) |
 | Data | Cloud Firestore, owner-only security rules |
-| Backend | Cloud Functions v2 (scheduled Garmin sync + callables) |
+| Backend | Cloud Functions v2 — Garmin sync, MCP server, GPT Actions REST API |
+| Android | Capacitor 8 shell + Health Connect, APK via GitHub Actions |
 | Hosting | Firebase Hosting |
 
-**No state library, no component kit, no CSS framework beyond Tailwind.** ~15 source files, one shared type model ([`src/types.ts`](src/types.ts)).
+**No state library, no component kit, no CSS framework beyond Tailwind.** ~20 source files, one shared type model ([`src/types.ts`](src/types.ts)).
 
 ## Data model
 
 ```
 users/{uid}/
-  meta/settings          goals (rest + optional training day), preferences
-  meta/garmin            sync status
-  meta/garminTokens      Garmin session tokens (server-managed)
-  foods/{id}             your food library — per-100g/ml or per-scoop/unit,
+  meta/settings          goals (rest + optional training day)
+  meta/garmin            Garmin sync status · meta/garminTokens (server-managed)
+  meta/mcp               personal LLM key · meta/family (compete membership)
+  foods/{id}             food/drink library — per-100g/ml or per-scoop/unit,
                          usage frecency, alcohol flag + grams
-  days/{yyyy-mm-dd}      the diary: entries[], workouts[], training, sleep
-garminUsers/{uid}        sync registry
+  days/{yyyy-mm-dd}      the diary: entries[], workouts[], training, sleep,
+                         steps, garmin wellness
+families/{code}          compete groups: members, scores, challenges
+globalUsers, globalScores  opt-in global leaderboard
+garminUsers/{uid}        sync registry · mcpKeys/{key} LLM key index (server-only)
 ```
 
-Entries are **denormalized** — macros are baked in at log time, so editing a library food never rewrites history.
+Entries are **denormalized** — macros are baked in at log time, so editing a library food never rewrites history. Leaderboards only ever see published daily scores, never the diary itself.
 
 ## Run your own
 
@@ -116,13 +128,15 @@ npm run build
 firebase deploy --only hosting,firestore:rules     # live
 ```
 
-**5. Garmin sync (optional)** — needs the Blaze plan (free at this scale):
+**5. Backend features (optional)** — Garmin sync, MCP server and the GPT Actions API need the Blaze plan (free at this scale):
 
 ```bash
 firebase deploy --only functions
 ```
 
-Users connect Garmin in-app (Settings → Garmin). Garmin rate-limits logins from cloud IPs, so a rejected connect is saved and retried automatically every sync cycle (credentials are deleted the moment login succeeds). Impatient users can generate tokens locally instead — the app serves a script at `/garmin-token.mjs` (also at [public/garmin-token.mjs](public/garmin-token.mjs)) whose output pastes into Settings → Garmin → Advanced.
+Users connect Garmin in-app (Settings → Garmin). Garmin rate-limits logins from cloud IPs, so a rejected connect is saved and retried automatically every sync cycle (credentials are deleted the moment login succeeds). Impatient users can generate tokens locally with the script the app serves at `/garmin-token.mjs`.
+
+**6. Android APK (optional)** — register an Android app in Firebase (`com.meatgrinder.app` → your own id), drop `google-services.json` into `android/app/`, add your keystore SHA-1, and the [GitHub Action](.github/workflows/android-apk.yml) builds the APK on every push.
 
 ## Design notes
 

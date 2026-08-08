@@ -17,11 +17,14 @@ firebase deploy --only firestore:rules
 
 ## Architecture in 30 seconds
 
-- `src/types.ts` — the data model (`Food`, `Entry`, `Workout`, `DayDoc`, `Settings`). Start here.
-- `src/hooks/useData.ts` — all Firestore access. Day docs at `users/{uid}/days/{yyyy-mm-dd}` hold `entries[]` (food), `workouts[]`, `training`, `sleep`. Foods at `users/{uid}/foods/{id}`, goals at `users/{uid}/meta/settings`.
+- `src/types.ts` — the data model (`Food`, `Entry`, `Workout`, `DayDoc`, `Settings`, `ScoreDoc`, `ChallengeDoc`). Start here.
+- `src/hooks/useData.ts` — diary/library Firestore access. Day docs at `users/{uid}/days/{yyyy-mm-dd}` hold `entries[]` (food), `workouts[]` (with Garmin metrics: HR/pace/elevation/cadence), `training`, `sleep`, `steps`, `garmin` wellness. Foods at `users/{uid}/foods/{id}`, goals at `users/{uid}/meta/settings`.
 - Entries are **denormalized**: macros are baked into each entry at log time. Editing a food never rewrites history.
-- `src/lib/` — pure helpers: `units.ts` (g/ml per-100 vs scoop/unit per-1), `meals.ts` (meal slots), `workouts.ts`, `llm.ts` (Copy-for-LLM report builders), `dates.ts`.
-- `functions/src/index.ts` — Garmin sync. Per-user tokens in `users/{uid}/meta/garminTokens`, registry in `garminUsers/{uid}`, scheduled every 3h + callables (`garminConnect`, `garminSyncUser`, `garminDisconnect`). Compiled to `functions/lib/` on deploy.
+- `src/lib/` — pure helpers: `units.ts` (g/ml per-100 vs scoop/unit per-1), `meals.ts` (meal slots), `workouts.ts` (types, titles, metric formatting), `score.ts` (Compete daily scoring), `llm.ts` (Copy-for-LLM report builders), `dates.ts`.
+- Tabs: Diary (`Today.tsx`), Compete (`Compete.tsx` + `useFamily.ts` — family/global leaderboards, challenges), Reports, Library (`Foods.tsx`), Settings (`Goals.tsx` — goals, Garmin, phone health, LLM connection panels). Hash-routed (`#diary` …).
+- `functions/src/index.ts` — Garmin sync: per-user tokens in `users/{uid}/meta/garminTokens`, registry `garminUsers/{uid}`, scheduled every 3h + callables (`garminConnect`, `garminSyncUser` with 30-day `full` resync, `garminDisconnect`). Rate-limited connects park credentials in `meta/garminPending` (deleted on first success).
+- `functions/src/mcp.ts` — LLM access, one key per user (Settings → LLM connection, index in server-only `mcpKeys/{key}`): MCP server at `/mcp/<key>` and REST + OpenAPI for GPT Actions at `/api/*` (header key or keyed `/api/k/<key>/…` no-auth variant). Tools: goals/day/range/foods reads, `log_food`, `add_food`, `update_food`. Both share the same payload builders — extend those, not one side.
+- Android shell: Capacitor 8 (`capacitor.config.ts`, `android/`) loading the **live** hosted app via `server.url`; `src/hooks/useHealth.ts` reads Health Connect steps (native only). APK built by `.github/workflows/android-apk.yml`; committed debug keystore keeps the Firebase SHA-1 stable. Compiled functions land in `functions/lib/` on deploy.
 
 ## Product rules — do not violate
 
@@ -30,7 +33,8 @@ firebase deploy --only firestore:rules
 3. **Exercise burn is never added back to the calorie budget.** Workout kcal is informational only. No eat-back calories, ever.
 4. **Alcohol shows in red with 🍺, no softening.** It counts toward calories and totals.
 5. **Sync never overwrites manual input** (e.g. Garmin sleep only fills empty days; workouts dedupe by `garminId`).
-6. **Every feature must be represented in the Copy-for-LLM output** (`src/lib/llm.js`). If you add data, add it to the reports.
+6. **Every feature must be represented in the Copy-for-LLM output** (`src/lib/llm.ts`) **and the MCP/Actions payloads** (`functions/src/mcp.ts`). If you add data, add it to the reports and the API.
+7. **Compete never exposes the diary.** Leaderboards read only published `ScoreDoc`s (points/steps/km) — never entries, macros or weights of other users.
 
 ## Engineering rules
 
