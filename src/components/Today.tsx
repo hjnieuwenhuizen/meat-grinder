@@ -69,6 +69,8 @@ export default function Today({ uid, settings, foods, addFood, updateFood }: Tod
         <CopyButton text={() => dayReport(key, day, settings)} />
       </div>
 
+      <div className="space-y-4 lg:grid lg:grid-cols-5 lg:items-start lg:gap-5 lg:space-y-0">
+      <div className="space-y-4 lg:col-span-2">
       {/* training toggle + sleep */}
       <div className="flex flex-wrap items-center gap-2">
         {settings.trainingEnabled && (
@@ -180,8 +182,10 @@ export default function Today({ uid, settings, foods, addFood, updateFood }: Tod
           )
         })}
       </div>
+      </div>
 
       {/* entries */}
+      <div className="lg:col-span-3">
       <Panel className="divide-y divide-edge">
         <div className="flex items-center justify-between p-4">
           <h2 className="font-semibold">Today's log</h2>
@@ -302,6 +306,8 @@ export default function Today({ uid, settings, foods, addFood, updateFood }: Tod
           ))
         })()}
       </Panel>
+      </div>
+      </div>
 
       {adding && (
         <AddFood

@@ -46,7 +46,7 @@ function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) =
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 pb-28 pt-[env(safe-area-inset-top)] sm:pb-8">
+    <div className="mx-auto max-w-3xl px-4 pb-28 pt-[env(safe-area-inset-top)] sm:pb-8 lg:max-w-6xl lg:px-6">
       <header className="flex items-center justify-between py-5">
         <h1 className="text-xl font-bold uppercase tracking-tight">
           Meat<span className="text-grind">Grinder</span>

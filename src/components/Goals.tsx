@@ -21,10 +21,12 @@ export default function Goals({ uid, settings, save }: {
   save: (s: Settings) => void
 }) {
   return (
-    <div className="max-w-lg space-y-4">
+    <div className="max-w-lg space-y-4 lg:grid lg:max-w-none lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0">
       <GoalsForm settings={settings} save={save} />
-      <GarminPanel uid={uid} />
-      <McpPanel uid={uid} />
+      <div className="space-y-4">
+        <GarminPanel uid={uid} />
+        <McpPanel uid={uid} />
+      </div>
     </div>
   )
 }
@@ -66,10 +68,13 @@ function McpPanel({ uid }: { uid: string }) {
               {copied ? 'Copied ✓' : 'Copy'}
             </button>
           </div>
-          <p className="text-[11px] leading-snug text-mist">
-            In Claude: Settings → Connectors → Add custom connector → paste this URL.
-            Then ask things like "how's my protein trending this month?"
-          </p>
+          <div className="space-y-1 text-[11px] leading-snug text-mist">
+            <p>Works with any MCP-capable AI assistant:</p>
+            <p><b className="font-medium text-bone">Claude</b> — Settings → Connectors → Add custom connector → paste this URL.</p>
+            <p><b className="font-medium text-bone">ChatGPT</b> — Settings → Apps &amp; Connectors → Advanced → enable Developer mode → Create connector → paste this URL (Plus/Pro).</p>
+            <p><b className="font-medium text-bone">Claude Code / other tools</b> — add it as a remote MCP server URL.</p>
+            <p>Then ask things like "how's my protein trending this month?"</p>
+          </div>
           <div className="flex gap-2">
             <button
               type="button" disabled={busy}

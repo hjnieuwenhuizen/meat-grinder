@@ -127,7 +127,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
       ) : (
         <>
           {/* summary stats */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
             <Stat label="Avg kcal" value={avg ? Math.round(avg.kcal) : '—'} />
             <Stat label="Avg protein" value={avg ? `${Math.round(avg.protein)}g` : '—'} />
             <Stat label="Days logged" value={`${logged.length}/${keys.length}`} />
@@ -163,7 +163,8 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
             <Stat label="Compliance" value={compliance === null ? '—' : `${compliance}%`} sub="protein + kcal hits" />
           </div>
 
-          {/* compliance grid (week only) */}
+          {/* compliance + calories side by side on desktop */}
+          <div className={mode === 'week' ? 'grid gap-4 lg:grid-cols-2' : ''}>
           {mode === 'week' && (
             <Panel className="p-4">
               <div className="mb-3 text-xs font-medium uppercase tracking-wider text-mist">Compliance</div>
@@ -258,6 +259,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
               <Legend color="var(--color-over)" label="over" />
             </div>
           </Panel>
+          </div>
 
           {/* per-day table */}
           <Panel className="divide-y divide-edge">

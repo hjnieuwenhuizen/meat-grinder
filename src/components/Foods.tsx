@@ -43,14 +43,14 @@ export default function Foods({ foods, addFood, updateFood, deleteFood }: FoodsA
         </div>
       </div>
 
-      <Panel className="divide-y divide-edge">
-        {filtered.length === 0 && (
-          <p className="p-8 text-center text-sm text-mist">
-            {foods.length === 0 ? 'No foods yet. Add your staples — values per 100g.' : 'No match.'}
-          </p>
-        )}
+      {filtered.length === 0 && (
+        <Panel className="p-8 text-center text-sm text-mist">
+          {foods.length === 0 ? 'No foods yet. Add your staples — values per 100g.' : 'No match.'}
+        </Panel>
+      )}
+      <div className="grid gap-2 lg:grid-cols-2">
         {filtered.map((f) => (
-          <div key={f.id} className="group flex items-center justify-between px-4 py-3">
+          <div key={f.id} className="group flex items-center justify-between rounded-xl border border-edge bg-panel px-4 py-3">
             <div>
               <div className={`font-medium ${f.alcohol ? 'text-over' : ''}`}>{f.alcohol ? '🍺 ' : ''}{f.name}</div>
               <div className="mt-0.5 text-xs text-mist">
@@ -69,7 +69,7 @@ export default function Foods({ foods, addFood, updateFood, deleteFood }: FoodsA
             </div>
           </div>
         ))}
-      </Panel>
+      </div>
 
       {editing && (
         <FoodForm
