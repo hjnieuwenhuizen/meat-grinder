@@ -34,7 +34,14 @@ export default function Goals({ uid, settings, save }: {
 function McpPanel({ uid }: { uid: string }) {
   const { config, generate, revoke } = useMcp(uid)
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'url' | 'key' | null>(null)
+
+  const copy = async (what: 'url' | 'key', value: string) => {
+    // trim hard — a stray newline in a pasted header breaks GPT Actions outright
+    await navigator.clipboard.writeText(value.trim())
+    setCopied(what)
+    setTimeout(() => setCopied(null), 1500)
+  }
 
   if (config === undefined) return null
   const url = config ? `${location.origin}/mcp/${config.key}` : null
@@ -55,19 +62,31 @@ function McpPanel({ uid }: { uid: string }) {
 
       {url ? (
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <code className="min-w-0 flex-1 truncate rounded-lg border border-edge bg-ink px-3 py-2 text-xs text-bone">{url}</code>
-            <button
-              type="button"
-              onClick={async () => {
-                await navigator.clipboard.writeText(url)
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1500)
-              }}
-              className="shrink-0 rounded-full bg-grind px-4 py-2 text-sm font-semibold text-ink transition hover:brightness-110"
-            >
-              {copied ? 'Copied ✓' : 'Copy'}
-            </button>
+          <div>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-mist">MCP URL (Claude, ChatGPT connectors)</div>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-lg border border-edge bg-ink px-3 py-2 text-xs text-bone">{url}</code>
+              <button
+                type="button"
+                onClick={() => copy('url', url)}
+                className="shrink-0 rounded-full bg-grind px-4 py-2 text-sm font-semibold text-ink transition hover:brightness-110"
+              >
+                {copied === 'url' ? 'Copied ✓' : 'Copy'}
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-mist">API key (custom GPT Actions — X-API-Key header)</div>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-lg border border-edge bg-ink px-3 py-2 text-xs text-bone">{config!.key}</code>
+              <button
+                type="button"
+                onClick={() => copy('key', config!.key)}
+                className="shrink-0 rounded-full border border-grind/50 px-4 py-2 text-sm font-semibold text-grind transition hover:bg-grind-soft"
+              >
+                {copied === 'key' ? 'Copied ✓' : 'Copy key'}
+              </button>
+            </div>
           </div>
           <div className="space-y-1 text-[11px] leading-snug text-mist">
             <p>Works with any MCP-capable AI assistant:</p>
