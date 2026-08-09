@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import GoalWizard from './GoalWizard'
 import { useGarmin } from '../hooks/useGarmin'
 import { useHealth } from '../hooks/useHealth'
 import { useMcp } from '../hooks/useMcp'
@@ -21,14 +22,37 @@ export default function Goals({ uid, settings, save }: {
   settings: Settings
   save: (s: Settings) => void
 }) {
+  const [wizard, setWizard] = useState(false)
+
   return (
     <div className="max-w-lg space-y-4 lg:grid lg:max-w-none lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0">
-      <GoalsForm settings={settings} save={save} />
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => setWizard(true)}
+          className="w-full rounded-2xl border border-grind/40 bg-grind-soft/30 p-4 text-left transition hover:bg-grind-soft/50"
+        >
+          <div className="font-medium">🧠 Smart goal setup</div>
+          <div className="mt-0.5 text-xs text-mist">
+            {settings.profile
+              ? 'Retune your macros — weight changed, new diet, new pace. Past days keep their old goals.'
+              : 'Answer a few questions and get science-backed macros for your diet style.'}
+          </div>
+        </button>
+        <GoalsForm settings={settings} save={save} />
+      </div>
       <div className="space-y-4">
         <GarminPanel uid={uid} />
         <PhoneHealthPanel uid={uid} />
         <McpPanel uid={uid} />
       </div>
+      {wizard && (
+        <GoalWizard
+          initial={settings.profile}
+          onSave={(next) => save(next)}
+          onClose={() => setWizard(false)}
+        />
+      )}
     </div>
   )
 }

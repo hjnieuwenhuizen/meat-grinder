@@ -48,6 +48,17 @@ firebase deploy --only firestore:rules
 - Legacy data shapes must keep working: old entries use `grams`, new ones `amount`+`unit` (see `units.js` helpers); day docs may lack `workouts`/`sleep`.
 - After UI changes: `npm run build` must pass before deploying. Deploy hosting after every accepted change.
 
+## Data migrations (existing users have live data — respect it)
+
+Real users (and their history) exist in production. Any schema change follows these rules:
+
+1. **Additive and optional only.** New fields are `?:` optional; never rename or repurpose an existing field. Readers default missing data (`{ ...EMPTY_DAY, ...snap.data() }` pattern — keep it on every read path, client and functions).
+2. **Old shapes stay readable forever.** Keep the legacy fallbacks working: entries with `grams` instead of `amount`+`unit`; days without `workouts`/`sleep`/`steps`/`goals`; days without `goals` resolve against live Settings (`goalFor`). Never drop a fallback because "everyone should be migrated by now".
+3. **Write-forward, not bulk rewrite.** Upgrade documents when they're next written (e.g. `goals` snapshots are stamped on first write of a day, by the app AND every server write path). No scripts that mass-rewrite user documents.
+4. **New data sources get their own lane + explicit precedence** — never overwrite an existing field with a new source (steps: typed `day.steps` > `garmin.steps` > `health.steps` is the model).
+5. **If a true backfill is unavoidable**, run it idempotently inside the scheduled function (like the legacy Garmin token migration), guard it so it runs once, and log what it touched.
+6. **Functions duplicate the read fallbacks** (`functions/src/mcp.ts`, `index.ts`) — when you change a shape, update both sides in the same commit, and keep the MCP/OpenAPI payloads backward compatible (add fields, don't remove).
+
 ## Do not
 
 - Do not store Garmin (or any) passwords beyond the pending-connect flow: credentials may sit in `users/{uid}/meta/garminPending` (owner-only) while Garmin rate-limits our IP, and MUST be deleted on the first successful login or on bad credentials. Never widen this.

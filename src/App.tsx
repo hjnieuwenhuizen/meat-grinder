@@ -10,6 +10,7 @@ import Reports from './components/Reports'
 import Foods from './components/Foods'
 import Goals from './components/Goals'
 import Compete from './components/Compete'
+import GoalWizard from './components/GoalWizard'
 
 const TABS = ['Diary', 'Compete', 'Reports', 'Library', 'Settings'] as const
 type Tab = (typeof TABS)[number]
@@ -41,7 +42,8 @@ export default function App() {
 }
 
 function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) => void }) {
-  const { settings, save } = useSettings(user.uid)
+  const { settings, save, isNew } = useSettings(user.uid)
+  const [wizardDismissed, setWizardDismissed] = useState(false)
   const foodsApi = useFoods(user.uid)
   const fam = useFamily(user.uid)
   const publish = useMemo(
@@ -90,6 +92,11 @@ function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) =
           </button>
         </div>
       </header>
+
+      {/* first sign-in: interview → macros, instead of silent defaults */}
+      {isNew && !wizardDismissed && (
+        <GoalWizard onSave={(next) => save(next)} onClose={() => setWizardDismissed(true)} />
+      )}
 
       {tab === 'Diary' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} publish={publish} />}
       {tab === 'Compete' && <Compete user={user} fam={fam} />}

@@ -57,6 +57,8 @@ interface DayDoc {
   garmin?: { steps?: number | null; restingHr?: number | null }
   /** phone Health Connect steps */
   health?: { steps?: number | null }
+  /** goals frozen when the day was first written — later Settings edits never rewrite history */
+  goals?: { trainingEnabled: boolean; rest: Macros; training: Macros }
 }
 
 const totalsOf = (entries: Entry[]): Macros =>
@@ -90,15 +92,63 @@ const loadSettings = async (uid: string) =>
     rest: { kcal: 2200, protein: 180, carbs: 200, fat: 70 },
   }
 
+// the day's frozen snapshot wins; live settings only cover legacy days
+const resolveGoal = (day: DayDoc, settings: Record<string, unknown>): Macros | null => {
+  const src = (day.goals ?? settings) as { trainingEnabled?: boolean; rest?: Macros; training?: Macros }
+  const g = src.trainingEnabled && day.training ? src.training : src.rest
+  return g ?? null
+}
+
+// freeze current goals onto a day the first time the server writes it
+const stampGoals = (day: DayDoc, settings: Record<string, unknown>) => {
+  const rest = settings.rest as Macros | undefined
+  if (!day.goals && rest) {
+    day.goals = {
+      trainingEnabled: Boolean(settings.trainingEnabled),
+      rest,
+      training: (settings.training as Macros | undefined) ?? rest,
+    }
+  }
+}
+
+const ACTIVITY_FACTORS: Record<string, number> = { sedentary: 1.2, light: 1.35, moderate: 1.5, active: 1.65, athlete: 1.8 }
+
+// where today's eating lands vs today's actual burn (insight only — the
+// budget never eats back exercise calories)
+const energyOf = (settings: Record<string, unknown>, day: DayDoc, eatenKcal: number) => {
+  const p = settings.profile as
+    | { sex: string; birthYear: number; heightCm: number; weightKg: number; activity: string }
+    | undefined
+  if (!p) return null
+  const age = Math.max(14, new Date().getFullYear() - p.birthYear)
+  const bmr = 10 * p.weightKg + 6.25 * p.heightCm - 5 * age + (p.sex === 'male' ? 5 : -161)
+  const exerciseKcal = (day.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
+  const maintenance = Math.round(bmr * (ACTIVITY_FACTORS[p.activity] ?? 1.35) + exerciseKcal)
+  const delta = Math.round(eatenKcal - maintenance)
+  const zone =
+    delta <= -1000 ? 'extreme cut' :
+    delta <= -600 ? 'aggressive cut' :
+    delta <= -300 ? 'moderate cut' :
+    delta <= -100 ? 'mild cut' :
+    delta <= 150 ? 'maintenance' : 'surplus (gaining)'
+  return {
+    maintenanceKcalToday: maintenance,
+    exerciseKcal,
+    deltaVsBurn: delta,
+    zone,
+    estKgPerWeek: Math.round(((delta * 7) / 7700) * 100) / 100,
+  }
+}
+
 const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>) => {
   const totals = round(totalsOf(day.entries))
-  const trainingEnabled = Boolean(settings.trainingEnabled)
-  const goal = (trainingEnabled && day.training ? settings.training : settings.rest) as Macros | undefined
+  const goal = resolveGoal(day, settings)
   const alcohol = day.entries.filter((e) => e.alcohol)
   return {
     date,
     trainingDay: day.training,
-    goal: goal ?? null,
+    goal,
+    energy: energyOf(settings, day, totals.kcal),
     totals,
     sleepHours: day.sleep ?? null,
     steps: day.steps ?? day.garmin?.steps ?? day.health?.steps ?? null,
@@ -316,13 +366,11 @@ const logFood = async (uid: string, input: LogFoodInput) => {
   const daySnap = await dayRef.get()
   const day: DayDoc = { training: false, entries: [], workouts: [], ...(daySnap.data() as Partial<DayDoc>) }
   day.entries = [...day.entries, entry]
+  const settings = await loadSettings(uid)
+  stampGoals(day, settings as Record<string, unknown>)
   await dayRef.set(day)
 
-  const settings = await loadSettings(uid)
-  const trainingEnabled = Boolean((settings as { trainingEnabled?: boolean }).trainingEnabled)
-  const goal = (trainingEnabled && day.training
-    ? (settings as { training?: Macros }).training
-    : (settings as { rest?: Macros }).rest) as Macros | undefined
+  const goal = resolveGoal(day, settings as Record<string, unknown>) ?? undefined
   const totals = round(totalsOf(day.entries))
 
   return {
@@ -346,10 +394,7 @@ const logFood = async (uid: string, input: LogFoodInput) => {
 
 const budgetAfter = async (uid: string, day: DayDoc) => {
   const settings = await loadSettings(uid)
-  const trainingEnabled = Boolean((settings as { trainingEnabled?: boolean }).trainingEnabled)
-  const goal = (trainingEnabled && day.training
-    ? (settings as { training?: Macros }).training
-    : (settings as { rest?: Macros }).rest) as Macros | undefined
+  const goal = resolveGoal(day, settings as Record<string, unknown>) ?? undefined
   const totals = round(totalsOf(day.entries))
   return {
     totals,
@@ -410,6 +455,7 @@ const entryUpdate = async (uid: string, date: string, entryId: string, changes: 
   if (changes.alcoholG !== undefined) next.alcoholG = Math.max(0, Number(changes.alcoholG) || 0) || null
 
   day.entries = day.entries.map((x, i) => (i === idx ? next : x))
+  stampGoals(day, await loadSettings(uid))
   await dayRef.set(day)
   return { ok: true, date, entry: { ...next, ...round(next) }, ...(await budgetAfter(uid, day)) }
 }
@@ -422,6 +468,7 @@ const entryDelete = async (uid: string, date: string, entryId: string) => {
   const removed = day.entries.find((e) => (e as { id?: string }).id === entryId)
   day.entries = day.entries.filter((e) => (e as { id?: string }).id !== entryId)
   if (day.entries.length === before) throw new Error(`No entry ${entryId} on ${date} — check ids via getDay`)
+  stampGoals(day, await loadSettings(uid))
   await dayRef.set(day)
   return { ok: true, date, deleted: removed ? { name: removed.name, ...round(removed) } : null, ...(await budgetAfter(uid, day)) }
 }

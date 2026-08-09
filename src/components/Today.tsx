@@ -8,6 +8,8 @@ import { MEALS, defaultMealNow } from '../lib/meals'
 import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
+import { energyReadout, ZONES } from '../lib/coach'
+import type { DayDoc, Profile } from '../types'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
 
@@ -26,7 +28,7 @@ type Drag = { id: string; kind: 'entry' | 'workout' } | null
 
 export default function Today({ uid, settings, foods, addFood, updateFood, publish }: TodayProps) {
   const [key, setKey] = useState(todayKey())
-  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout } = useDay(uid, key)
+  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout } = useDay(uid, key, settings)
   const [adding, setAdding] = useState(false)
   const [rescuing, setRescuing] = useState(false)
   const [editing, setEditing] = useState<Entry | null>(null)
@@ -184,6 +186,9 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
 
       {/* today's mission */}
       <Mission goal={goal} totals={totals} foods={foods} onRescue={() => setRescuing(true)} />
+
+      {/* energy zones — where today's eating lands vs today's actual burn */}
+      {settings.profile && <EnergyPanel profile={settings.profile} day={day} eaten={totals.kcal} />}
 
       {/* macro rings — protein is a hard target; carbs/fat are flexible energy
           levers judged by the calorie budget, never by their own line */}
@@ -387,6 +392,53 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
         />
       )}
     </div>
+  )
+}
+
+// Where the day is heading: eaten vs (rest burn + logged exercise), banded
+// into cut/maintain/gain zones. Pure insight — the goal budget never eats
+// back exercise calories.
+function EnergyPanel({ profile, day, eaten }: { profile: Profile; day: DayDoc; eaten: number }) {
+  const r = energyReadout(profile, day, eaten)
+  // bar spans maintenance −1300 … +450; marker = eaten position
+  const span = { min: r.maintenance - 1300, max: r.maintenance + 450 }
+  const pct = Math.min(100, Math.max(0, ((r.eaten - span.min) / (span.max - span.min)) * 100))
+  const edges = [-1000, -600, -300, -100, 150] // zone boundaries as deltas
+  const widths = [
+    ((edges[0] + 1300) / 1750) * 100,
+    ((edges[1] - edges[0]) / 1750) * 100,
+    ((edges[2] - edges[1]) / 1750) * 100,
+    ((edges[3] - edges[2]) / 1750) * 100,
+    ((edges[4] - edges[3]) / 1750) * 100,
+    ((450 - edges[4]) / 1750) * 100,
+  ]
+
+  return (
+    <Panel className="p-4">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-medium uppercase tracking-wider text-mist">Energy</span>
+        <span className="text-[10px] tabular-nums text-mist" title="Rest burn + logged exercise — informational, never added to your budget">
+          burn today ≈ {r.maintenance.toLocaleString()} kcal{r.exerciseKcal ? ` (incl. ${r.exerciseKcal} exercise)` : ''}
+        </span>
+      </div>
+      <div className="relative mt-2 h-2.5 overflow-hidden rounded-full">
+        <div className="flex h-full">
+          {ZONES.map((z, i) => (
+            <div key={z.id} style={{ width: `${widths[i]}%`, background: z.color, opacity: r.zone.id === z.id ? 1 : 0.22 }} />
+          ))}
+        </div>
+        <div className="absolute top-1/2 -translate-y-1/2" style={{ left: `calc(${pct}% - 5px)` }}>
+          <div className="size-2.5 rounded-full border-2 border-ink bg-bone shadow" />
+        </div>
+      </div>
+      <div className="mt-2 text-sm">
+        <b style={{ color: r.zone.color }}>{r.zone.label}</b>
+        <span className="text-mist">
+          {' '}— {r.delta > 0 ? '+' : ''}{r.delta.toLocaleString()} kcal vs burn
+          {r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week at this pace` : ''}
+        </span>
+      </div>
+    </Panel>
   )
 }
 

@@ -47,6 +47,7 @@ interface DayDoc {
   workouts: Workout[]
   sleep?: number | null
   garmin?: { steps?: number | null; restingHr?: number | null }
+  goals?: { trainingEnabled: boolean; rest: unknown; training: unknown }
 }
 
 interface GarminActivity {
@@ -248,6 +249,11 @@ async function syncUser(uid: string, full = false): Promise<string> {
 
   for (const [key, day] of Object.entries(dayCache)) {
     if (!day._dirty) continue
+    // freeze current goals onto newly-touched days (goal-snapshot model)
+    const st = settings as { trainingEnabled?: boolean; rest?: unknown; training?: unknown }
+    if (!day.goals && st.rest) {
+      day.goals = { trainingEnabled: Boolean(st.trainingEnabled), rest: st.rest, training: st.training ?? st.rest }
+    }
     const { _dirty, ...data } = day
     void _dirty
     await db.doc(`users/${uid}/days/${key}`).set(data)

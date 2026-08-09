@@ -4,7 +4,8 @@ import {
   query, orderBy, documentId, startAt, endAt, getDocs,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import type { DayDoc, Entry, Food, Macros, Settings, Workout } from '../types'
+import { todayKey } from '../lib/dates'
+import type { DayDoc, Entry, Food, GoalSnapshot, Macros, Settings, Workout } from '../types'
 
 export const DEFAULT_GOALS: Macros = { kcal: 2200, protein: 180, carbs: 200, fat: 70 }
 
@@ -20,21 +21,37 @@ const settingsRef = (uid: string) => doc(db, 'users', uid, 'meta', 'settings')
 const dayRef = (uid: string, key: string) => doc(db, 'users', uid, 'days', key)
 const foodsCol = (uid: string) => collection(db, 'users', uid, 'foods')
 
+export const snapshotOf = (s: Settings): GoalSnapshot => ({
+  trainingEnabled: s.trainingEnabled,
+  rest: s.rest,
+  training: s.training,
+})
+
 export function useSettings(uid: string) {
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [isNew, setIsNew] = useState(false)
 
   useEffect(() => {
     return onSnapshot(settingsRef(uid), (snap) => {
+      setIsNew(!snap.exists())
       setSettings(snap.exists() ? { ...DEFAULT_SETTINGS, ...snap.data() } : DEFAULT_SETTINGS)
     })
   }, [uid])
 
-  const save = useCallback((next: Settings) => setDoc(settingsRef(uid), next), [uid])
+  const save = useCallback(
+    async (next: Settings) => {
+      await setDoc(settingsRef(uid), next)
+      // new goals apply from TODAY forward — re-stamp today's snapshot,
+      // while every past day keeps the goals it was scored against
+      await setDoc(dayRef(uid, todayKey()), { goals: snapshotOf(next) }, { merge: true })
+    },
+    [uid],
+  )
 
-  return { settings, save }
+  return { settings, save, isNew }
 }
 
-export function useDay(uid: string, key: string) {
+export function useDay(uid: string, key: string, settings?: Settings | null) {
   const [day, setDay] = useState<DayDoc | null>(null)
 
   useEffect(() => {
@@ -45,8 +62,12 @@ export function useDay(uid: string, key: string) {
   }, [uid, key])
 
   const write = useCallback(
-    (next: DayDoc) => setDoc(dayRef(uid, key), next),
-    [uid, key],
+    (next: DayDoc) => {
+      // freeze the goals the first time a day is written
+      if (!next.goals && settings) next.goals = snapshotOf(settings)
+      return setDoc(dayRef(uid, key), next)
+    },
+    [uid, key, settings],
   )
 
   // callers only run these once day is loaded; the assertion keeps call sites clean
@@ -123,5 +144,8 @@ export const totalsOf = (day: Pick<DayDoc, 'entries'> | null | undefined): Macro
     { kcal: 0, protein: 0, carbs: 0, fat: 0 },
   )
 
-export const goalFor = (settings: Settings, day: Pick<DayDoc, 'training'> | null | undefined): Macros =>
-  settings.trainingEnabled && day?.training ? settings.training : settings.rest
+// the day's frozen snapshot wins; live settings only cover legacy days
+export const goalFor = (settings: Settings, day: Pick<DayDoc, 'training' | 'goals'> | null | undefined): Macros => {
+  const src = day?.goals ?? settings
+  return src.trainingEnabled && day?.training ? src.training : src.rest
+}

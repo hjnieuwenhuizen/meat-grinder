@@ -4,6 +4,7 @@ import { MEALS } from './meals'
 import { workoutTitle, workoutDetails } from './workouts'
 import { totalsOf, goalFor } from '../hooks/useData'
 import { scoreDay, stepsOf, MAX_POINTS } from './score'
+import { energyReadout } from './coach'
 import type { DayDoc, Macros, Settings } from '../types'
 
 const r = (n: number) => Math.round(n * 10) / 10
@@ -57,6 +58,12 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
     })}`,
     ...(() => {
       const extra: string[] = []
+      if (settings.profile) {
+        const r = energyReadout(settings.profile, day, totals.kcal)
+        extra.push(
+          `Energy: ${r.eaten} kcal eaten vs ~${r.maintenance} burned${r.exerciseKcal ? ` (incl. ${r.exerciseKcal} exercise)` : ''} → ${r.delta > 0 ? '+' : ''}${r.delta} kcal · ${r.zone.label}${r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week at this pace` : ''}`,
+        )
+      }
       if (day.sleep) extra.push(`Sleep last night: ${day.sleep}h`)
       const steps = stepsOf(day) || null
       if (steps) extra.push(`Steps: ${steps.toLocaleString()}${day.steps ? ' (manual)' : ' (Garmin)'}`)

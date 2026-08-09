@@ -14,7 +14,33 @@ export interface Macros {
   fat: number
 }
 
+export type DietId = 'carnivore' | 'keto' | 'lowcarb' | 'balanced' | 'highcarb'
+export type ActivityId = 'sedentary' | 'light' | 'moderate' | 'active' | 'athlete'
+
+/** who the user is — drives the macro calculator and energy zones */
+export interface Profile {
+  sex: 'male' | 'female'
+  birthYear: number
+  heightCm: number
+  weightKg: number
+  /** baseline lifestyle WITHOUT logged training (job, day-to-day movement) */
+  activity: ActivityId
+  diet: DietId
+  /** target rate in kg per week: negative = lose, 0 = maintain, positive = gain */
+  goalRate: number
+  trainingDays?: number
+}
+
 export interface Settings {
+  trainingEnabled: boolean
+  rest: Macros
+  training: Macros
+  profile?: Profile
+}
+
+/** frozen copy of the goals as they were when the day was logged —
+ *  later Settings changes never rewrite history */
+export interface GoalSnapshot {
   trainingEnabled: boolean
   rest: Macros
   training: Macros
@@ -90,6 +116,8 @@ export interface DayDoc {
   /** phone sensors via Health Connect (Android shell) — separate lane so a
    *  pocketed phone can never bury a watch's count */
   health?: { steps?: number | null }
+  /** goals frozen at log time — see GoalSnapshot */
+  goals?: GoalSnapshot
 }
 
 /* --- family leaderboard --- */
