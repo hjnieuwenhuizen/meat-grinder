@@ -84,9 +84,12 @@ export interface DayDoc {
   entries: Entry[]
   workouts: Workout[]
   sleep?: number | null
-  /** manually entered steps — wins over garmin.steps */
+  /** manually TYPED steps — wins over every automatic source */
   steps?: number | null
   garmin?: GarminDay
+  /** phone sensors via Health Connect (Android shell) — separate lane so a
+   *  pocketed phone can never bury a watch's count */
+  health?: { steps?: number | null }
 }
 
 /* --- family leaderboard --- */

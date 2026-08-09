@@ -34,7 +34,8 @@ export async function syncHealthSteps(uid: string, days = 2): Promise<string> {
     const steps = Math.round(sample.value)
     if (!steps || steps <= 0) continue
     const key = keyOf(new Date(sample.startDate))
-    await setDoc(doc(db, 'users', uid, 'days', key), { steps }, { merge: true })
+    // own lane: never touches the manual `steps` field or Garmin's count
+    await setDoc(doc(db, 'users', uid, 'days', key), { health: { steps } }, { merge: true })
     wrote++
   }
   return wrote ? `synced steps for ${wrote} day${wrote > 1 ? 's' : ''}` : 'no step data found'

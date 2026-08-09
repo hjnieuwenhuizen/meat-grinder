@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { fmtAmount } from '../lib/units'
+import { stepsOf } from '../lib/score'
 import { workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { fetchDays, totalsOf, goalFor } from '../hooks/useData'
 import { todayKey, addDays, startOfWeek, weekKeys, monthKeys, fromKey, fmtDay, fmtMonth } from '../lib/dates'
@@ -147,9 +148,9 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
             <Stat
               label="Avg steps"
               value={(() => {
-                const days_ = keys.filter((k) => days[k]?.garmin?.steps)
+                const days_ = keys.filter((k) => stepsOf(days[k]))
                 if (!days_.length) return '—'
-                return Math.round(days_.reduce((s, k) => s + (days[k].garmin?.steps ?? 0), 0) / days_.length).toLocaleString()
+                return Math.round(days_.reduce((s, k) => s + stepsOf(days[k]), 0) / days_.length).toLocaleString()
               })()}
             />
             <Stat
@@ -297,10 +298,10 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                   </button>
                   {isOpen && !empty && (
                     <div className="space-y-1 bg-ink/40 px-4 pb-3 pt-1">
-                      {(day.sleep || day.garmin?.steps || day.garmin?.restingHr) && (
+                      {(day.sleep || stepsOf(day) || day.garmin?.restingHr) && (
                         <div className="flex items-center gap-3 text-xs text-mist">
                           {day.sleep ? <span>😴 {day.sleep}h</span> : null}
-                          {day.garmin?.steps ? <span>👟 {day.garmin.steps.toLocaleString()}</span> : null}
+                          {stepsOf(day) ? <span>👟 {stepsOf(day).toLocaleString()}</span> : null}
                           {day.garmin?.restingHr ? <span>❤️ {day.garmin.restingHr} bpm</span> : null}
                         </div>
                       )}

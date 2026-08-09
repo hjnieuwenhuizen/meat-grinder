@@ -6,8 +6,10 @@ import type { ChallengeMetric, DayDoc, ScoreBreakdown, ScoreDoc, Settings } from
 export const STEP_GOAL = 7000
 
 /** manual steps win over Garmin */
-export const stepsOf = (day: Pick<DayDoc, 'steps' | 'garmin'> | null | undefined): number =>
-  day?.steps ?? day?.garmin?.steps ?? 0
+// typed value wins; otherwise trust whichever automatic source saw more
+// (watch on a run vs phone in a pocket)
+export const stepsOf = (day: Pick<DayDoc, 'steps' | 'garmin' | 'health'> | null | undefined): number =>
+  day?.steps ?? Math.max(day?.garmin?.steps ?? 0, day?.health?.steps ?? 0)
 
 export const SCORE_ITEMS: { key: keyof ScoreBreakdown; emoji: string; label: string; max: number }[] = [
   { key: 'logged', emoji: '📓', label: 'Logged food', max: 1 },

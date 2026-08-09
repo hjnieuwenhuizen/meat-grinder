@@ -52,7 +52,11 @@ interface DayDoc {
   entries: Entry[]
   workouts: Workout[]
   sleep?: number | null
+  /** manually typed steps — wins over automatic sources */
+  steps?: number | null
   garmin?: { steps?: number | null; restingHr?: number | null }
+  /** phone Health Connect steps */
+  health?: { steps?: number | null }
 }
 
 const totalsOf = (entries: Entry[]): Macros =>
@@ -97,7 +101,7 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
     goal: goal ?? null,
     totals,
     sleepHours: day.sleep ?? null,
-    steps: day.garmin?.steps ?? null,
+    steps: day.steps ?? (Math.max(day.garmin?.steps ?? 0, day.health?.steps ?? 0) || null),
     restingHeartRate: day.garmin?.restingHr ?? null,
     alcohol: alcohol.length
       ? {

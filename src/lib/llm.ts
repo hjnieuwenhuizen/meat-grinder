@@ -3,7 +3,7 @@ import { fmtAmount } from './units'
 import { MEALS } from './meals'
 import { workoutTitle, workoutDetails } from './workouts'
 import { totalsOf, goalFor } from '../hooks/useData'
-import { scoreDay, MAX_POINTS } from './score'
+import { scoreDay, stepsOf, MAX_POINTS } from './score'
 import type { DayDoc, Macros, Settings } from '../types'
 
 const r = (n: number) => Math.round(n * 10) / 10
@@ -58,7 +58,7 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
     ...(() => {
       const extra: string[] = []
       if (day.sleep) extra.push(`Sleep last night: ${day.sleep}h`)
-      const steps = day.steps ?? day.garmin?.steps
+      const steps = stepsOf(day) || null
       if (steps) extra.push(`Steps: ${steps.toLocaleString()}${day.steps ? ' (manual)' : ' (Garmin)'}`)
       if (day.garmin?.restingHr) extra.push(`Resting HR: ${day.garmin.restingHr} bpm (Garmin)`)
       const score = scoreDay(day, settings)
@@ -93,7 +93,7 @@ export function rangeReport(
       ? ` | trained: ${day.workouts.map((w) => `${workoutTitle(w)}${workoutDetails(w) ? ` (${workoutDetails(w)})` : ''}`).join(', ')}`
       : ''
     const sleep = day.sleep ? ` | sleep ${day.sleep}h` : ''
-    const steps = day.steps ?? day.garmin?.steps
+    const steps = stepsOf(day) || null
     const wellness = [
       steps ? ` | steps ${steps}` : '',
       day.garmin?.restingHr ? ` | resting HR ${day.garmin.restingHr}` : '',
