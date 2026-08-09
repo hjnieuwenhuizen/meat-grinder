@@ -101,7 +101,7 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
     goal: goal ?? null,
     totals,
     sleepHours: day.sleep ?? null,
-    steps: day.steps ?? (Math.max(day.garmin?.steps ?? 0, day.health?.steps ?? 0) || null),
+    steps: day.steps ?? day.garmin?.steps ?? day.health?.steps ?? null,
     restingHeartRate: day.garmin?.restingHr ?? null,
     alcohol: alcohol.length
       ? {
