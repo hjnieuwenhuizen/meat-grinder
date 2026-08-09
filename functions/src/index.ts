@@ -266,6 +266,23 @@ async function syncUser(uid: string, full = false): Promise<string> {
   return summary
 }
 
+// Freshness gate shared by app-open and LLM reads: sync at most once per
+// 10 minutes per user so Garmin isn't hammered and reads stay fast.
+export async function syncIfStale(uid: string, maxAgeMs = 10 * 60_000): Promise<string> {
+  const status = (await statusRef(uid).get()).data() as
+    | { connected?: boolean; lastSync?: number }
+    | undefined
+  if (!status?.connected) return 'not-connected'
+  if (status.lastSync && Date.now() - status.lastSync < maxAgeMs) return 'fresh'
+  try {
+    await syncUser(uid)
+    return 'synced'
+  } catch (e) {
+    logger.warn(`syncIfStale failed for ${uid}: ${e instanceof Error ? e.message : String(e)}`)
+    return 'sync-failed'
+  }
+}
+
 const isRateLimit = (e: unknown): boolean => {
   const msg = e instanceof Error ? e.message : String(e)
   return msg.includes('429') || msg.toLowerCase().includes('rate limit')
@@ -394,9 +411,11 @@ export const garminSyncUser = onCall(
   async (req) => {
     const uid = req.auth?.uid
     if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.')
-    const full = Boolean((req.data as { full?: boolean } | undefined)?.full)
+    const { full, ifStale } = (req.data ?? {}) as { full?: boolean; ifStale?: boolean }
+    // app-open freshness ping: cheap no-op unless the last sync is old
+    if (ifStale) return { ok: true, summary: await syncIfStale(uid) }
     try {
-      return { ok: true, summary: await syncUser(uid, full) }
+      return { ok: true, summary: await syncUser(uid, Boolean(full)) }
     } catch (e) {
       if (e instanceof HttpsError) throw e
       throw friendly(e)

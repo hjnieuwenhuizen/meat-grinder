@@ -11,6 +11,8 @@ import * as crypto from 'crypto'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+// lazy circular import is safe under CJS: only called inside request handlers
+import { syncIfStale } from './index.js'
 
 if (!getApps().length) initializeApp()
 const db = getFirestore()
@@ -360,7 +362,10 @@ function buildServer(uid: string): McpServer {
       description: 'Full diary for one day: every food entry (with meal slot, amounts, macros, alcohol flags), workouts, sleep, steps, resting heart rate, totals and goals.',
       inputSchema: { date: z.string().regex(DATE_RX).describe('Date as YYYY-MM-DD') },
     },
-    async ({ date }) => text(await dayPayload(uid, date)),
+    async ({ date }) => {
+      const garminSync = await syncIfStale(uid)
+      return text({ garminSync, ...(await dayPayload(uid, date)) })
+    },
   )
 
   server.registerTool(
@@ -372,7 +377,10 @@ function buildServer(uid: string): McpServer {
         end_date: z.string().regex(DATE_RX).describe('Last day, YYYY-MM-DD (inclusive)'),
       },
     },
-    async ({ start_date, end_date }) => text(await rangePayload(uid, start_date, end_date)),
+    async ({ start_date, end_date }) => {
+      const garminSync = await syncIfStale(uid)
+      return text({ garminSync, ...(await rangePayload(uid, start_date, end_date)) })
+    },
   )
 
   server.registerTool(
@@ -850,7 +858,8 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
         res.status(400).json({ error: 'date must be YYYY-MM-DD' })
         return
       }
-      res.json(await dayPayload(uid, date))
+      const garminSync = await syncIfStale(uid)
+      res.json({ garminSync, ...(await dayPayload(uid, date)) })
     } else if (path === '/range') {
       const start = String(req.query.start ?? '')
       const end = String(req.query.end ?? '')
@@ -858,7 +867,8 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
         res.status(400).json({ error: 'start and end must be YYYY-MM-DD' })
         return
       }
-      res.json(await rangePayload(uid, start, end))
+      const garminSync = await syncIfStale(uid)
+      res.json({ garminSync, ...(await rangePayload(uid, start, end)) })
     } else if (path === '/foods') {
       res.json(await foodsPayload(uid, String(req.query.query ?? '')))
     } else {

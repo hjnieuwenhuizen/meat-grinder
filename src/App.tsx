@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
-import { auth, logOut } from './lib/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { auth, functions, logOut } from './lib/firebase'
 import { useSettings, useFoods } from './hooks/useData'
 import { useFamily, useScoreBackfill } from './hooks/useFamily'
+import { autoSyncHealth } from './hooks/useHealth'
 import SignIn from './components/SignIn'
 import Today from './components/Today'
 import Reports from './components/Reports'
@@ -48,6 +50,21 @@ function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) =
     [fam.code, fam.global],
   )
   useScoreBackfill(user.uid, settings, publish)
+
+  // freshest data on open and whenever the app comes back to the foreground:
+  // Garmin (server throttles to one real sync per 10 min) + phone Health Connect
+  useEffect(() => {
+    const kick = () => {
+      void httpsCallable(functions, 'garminSyncUser')({ ifStale: true }).catch(() => {})
+      autoSyncHealth(user.uid)
+    }
+    kick()
+    const onVis = () => {
+      if (document.visibilityState === 'visible') kick()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [user.uid])
 
   if (!settings) {
     return <div className="flex min-h-dvh items-center justify-center text-mist">Loading…</div>
