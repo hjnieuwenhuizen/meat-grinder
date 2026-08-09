@@ -7,6 +7,7 @@ import { isPer100, unitOf, amountOf, fmtAmount, basisLabel, scaleFor } from '../
 import { MEALS, defaultMealNow } from '../lib/meals'
 import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
+import { useSyncing } from '../hooks/useSync'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
 
@@ -35,6 +36,8 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
 
   const bumpUsed = (food: Food) =>
     updateFood(food.id, { used: (food.used || 0) + 1, lastUsed: Date.now() })
+
+  const syncing = useSyncing()
 
   // keep the leaderboards in sync with whatever day is on screen
   useEffect(() => {
@@ -78,7 +81,15 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
             <ChevronRight className="size-5" />
           </button>
         </div>
-        <CopyButton text={() => dayReport(key, day, settings)} />
+        <div className="flex items-center gap-3">
+          {syncing && (
+            <span className="flex items-center gap-1.5 text-xs text-mist" title="Pulling latest from Garmin / Health Connect">
+              <span className="size-3 animate-spin rounded-full border-2 border-edge border-t-grind" />
+              syncing
+            </span>
+          )}
+          <CopyButton text={() => dayReport(key, day, settings)} />
+        </div>
       </div>
 
       <div className="space-y-4 lg:grid lg:grid-cols-5 lg:items-start lg:gap-5 lg:space-y-0">
