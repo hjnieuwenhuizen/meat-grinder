@@ -134,6 +134,7 @@ const dayPayload = async (uid: string, date: string) => {
   return {
     ...daySummary(date, day, settings),
     entries: day.entries.map((e) => ({
+      id: (e as { id?: string }).id ?? null,
       name: e.name,
       amount: e.amount ?? e.grams ?? null,
       unit: e.unit ?? (e.grams != null ? 'g' : null),
@@ -341,6 +342,90 @@ const logFood = async (uid: string, input: LogFoodInput) => {
   }
 }
 
+/* ---------- diary entry edit + delete ---------- */
+
+const budgetAfter = async (uid: string, day: DayDoc) => {
+  const settings = await loadSettings(uid)
+  const trainingEnabled = Boolean((settings as { trainingEnabled?: boolean }).trainingEnabled)
+  const goal = (trainingEnabled && day.training
+    ? (settings as { training?: Macros }).training
+    : (settings as { rest?: Macros }).rest) as Macros | undefined
+  const totals = round(totalsOf(day.entries))
+  return {
+    totals,
+    goal: goal ?? null,
+    remaining: goal
+      ? round({
+          kcal: goal.kcal - totals.kcal,
+          protein: goal.protein - totals.protein,
+          carbs: goal.carbs - totals.carbs,
+          fat: goal.fat - totals.fat,
+        })
+      : null,
+  }
+}
+
+interface EntryChanges {
+  name?: string
+  amount?: number
+  kcal?: number
+  protein?: number
+  carbs?: number
+  fat?: number
+  meal?: string
+  alcohol?: boolean
+  alcoholG?: number
+}
+
+const entryUpdate = async (uid: string, date: string, entryId: string, changes: EntryChanges) => {
+  const dayRef = db.doc(`users/${uid}/days/${date}`)
+  const snap = await dayRef.get()
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...(snap.data() as Partial<DayDoc>) }
+  const idx = day.entries.findIndex((e) => (e as { id?: string }).id === entryId)
+  if (idx < 0) throw new Error(`No entry ${entryId} on ${date} — check ids via getDay`)
+
+  const e = day.entries[idx] as Entry & { id: string; grams?: number | null }
+  const next = { ...e }
+  const macroKeys = ['kcal', 'protein', 'carbs', 'fat'] as const
+  const hasExplicitMacros = macroKeys.some((k) => changes[k] !== undefined)
+
+  if (changes.name?.trim()) next.name = changes.name.trim().slice(0, 100)
+  if (changes.meal && MEAL_IDS.includes(changes.meal)) next.meal = changes.meal
+
+  // amount-only change on a measured entry rescales macros, like the app
+  if (changes.amount !== undefined && changes.amount > 0) {
+    const a0 = e.amount ?? e.grams
+    if (a0 && a0 > 0 && !hasExplicitMacros) {
+      const scale = changes.amount / a0
+      for (const k of macroKeys) next[k] = (e[k] ?? 0) * scale
+      if (e.alcoholG) next.alcoholG = Math.round(e.alcoholG * scale * 10) / 10
+    }
+    next.amount = changes.amount
+    next.grams = null
+  }
+  for (const k of macroKeys) {
+    if (changes[k] !== undefined) next[k] = Math.max(0, Number(changes[k]) || 0)
+  }
+  if (changes.alcohol !== undefined) next.alcohol = Boolean(changes.alcohol)
+  if (changes.alcoholG !== undefined) next.alcoholG = Math.max(0, Number(changes.alcoholG) || 0) || null
+
+  day.entries = day.entries.map((x, i) => (i === idx ? next : x))
+  await dayRef.set(day)
+  return { ok: true, date, entry: { ...next, ...round(next) }, ...(await budgetAfter(uid, day)) }
+}
+
+const entryDelete = async (uid: string, date: string, entryId: string) => {
+  const dayRef = db.doc(`users/${uid}/days/${date}`)
+  const snap = await dayRef.get()
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...(snap.data() as Partial<DayDoc>) }
+  const before = day.entries.length
+  const removed = day.entries.find((e) => (e as { id?: string }).id === entryId)
+  day.entries = day.entries.filter((e) => (e as { id?: string }).id !== entryId)
+  if (day.entries.length === before) throw new Error(`No entry ${entryId} on ${date} — check ids via getDay`)
+  await dayRef.set(day)
+  return { ok: true, date, deleted: removed ? { name: removed.name, ...round(removed) } : null, ...(await budgetAfter(uid, day)) }
+}
+
 const uidForKey = async (key: string | undefined | null): Promise<string | null> => {
   if (!key || !/^[a-f0-9]{48}$/.test(key)) return null
   const snap = await db.doc(`mcpKeys/${key}`).get()
@@ -363,7 +448,7 @@ function buildServer(uid: string): McpServer {
   server.registerTool(
     'get_day',
     {
-      description: 'Full diary for one day: every food entry (with meal slot, amounts, macros, alcohol flags), workouts, sleep, steps, resting heart rate, totals and goals.',
+      description: 'Full diary for one day: every food entry (with id — needed for update_entry/delete_entry — meal slot, amounts, macros, alcohol flags), workouts, sleep, steps, resting heart rate, totals and goals.',
       inputSchema: { date: z.string().regex(DATE_RX).describe('Date as YYYY-MM-DD') },
     },
     async ({ date }) => {
@@ -435,6 +520,39 @@ function buildServer(uid: string): McpServer {
       },
     },
     async (input) => text(await logFood(uid, input as LogFoodInput)),
+  )
+
+  server.registerTool(
+    'update_entry',
+    {
+      description: "Edit a diary entry (get its id from get_day). Changing only `amount` on a measured entry rescales its macros proportionally; explicit macro values override. Returns updated day totals and remaining budget.",
+      inputSchema: {
+        date: z.string().regex(DATE_RX).describe('Day the entry is on, YYYY-MM-DD'),
+        entryId: z.string().min(1),
+        name: z.string().min(1).optional(),
+        amount: z.number().positive().optional().describe('New amount in the entry unit — rescales macros unless macros are also given'),
+        kcal: z.number().min(0).optional(),
+        protein: z.number().min(0).optional(),
+        carbs: z.number().min(0).optional(),
+        fat: z.number().min(0).optional(),
+        meal: z.enum(['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3']).optional(),
+        alcohol: z.boolean().optional(),
+        alcoholG: z.number().min(0).optional(),
+      },
+    },
+    async ({ date, entryId, ...changes }) => text(await entryUpdate(uid, date, entryId, changes as EntryChanges)),
+  )
+
+  server.registerTool(
+    'delete_entry',
+    {
+      description: 'Delete a diary entry (get its id from get_day). Returns updated day totals and remaining budget.',
+      inputSchema: {
+        date: z.string().regex(DATE_RX).describe('Day the entry is on, YYYY-MM-DD'),
+        entryId: z.string().min(1),
+      },
+    },
+    async ({ date, entryId }) => text(await entryDelete(uid, date, entryId)),
   )
 
   server.registerTool(
@@ -699,6 +817,84 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/entry': {
+      patch: {
+        operationId: 'updateEntry',
+        summary: 'Edit a diary entry (ids come from getDay). Changing only amount rescales macros proportionally; explicit macro values override. Returns updated totals and remaining budget.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['date', 'entryId'],
+                properties: {
+                  date: { type: 'string', description: 'Day the entry is on, YYYY-MM-DD' },
+                  entryId: { type: 'string', description: 'Entry id from getDay' },
+                  name: { type: 'string' },
+                  amount: { type: 'number', description: 'New amount in the entry unit — rescales macros unless macros are also given' },
+                  kcal: { type: 'number' },
+                  protein: { type: 'number' },
+                  carbs: { type: 'number' },
+                  fat: { type: 'number' },
+                  meal: { type: 'string', enum: ['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3'] },
+                  alcohol: { type: 'boolean' },
+                  alcoholG: { type: 'number' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Updated entry + day totals',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' },
+                    date: { type: 'string' },
+                    entry: { type: 'object', properties: { name: { type: 'string' }, ...MACROS_SCHEMA.properties } },
+                    totals: MACROS_SCHEMA,
+                    goal: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+                    remaining: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      delete: {
+        operationId: 'deleteEntry',
+        summary: 'Delete a diary entry (ids come from getDay). Returns updated totals and remaining budget.',
+        parameters: [
+          { name: 'date', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
+          { name: 'entryId', in: 'query', required: true, schema: { type: 'string' }, description: 'Entry id from getDay' },
+        ],
+        responses: {
+          '200': {
+            description: 'Deleted + day totals',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' },
+                    date: { type: 'string' },
+                    deleted: { type: ['object', 'null'], properties: { name: { type: 'string' }, ...MACROS_SCHEMA.properties } },
+                    totals: MACROS_SCHEMA,
+                    goal: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+                    remaining: { ...MACROS_SCHEMA, type: ['object', 'null'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/foods': {
       post: {
         operationId: 'addFood',
@@ -793,7 +989,7 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
 export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds: 60 }, async (req, res) => {
   let path = (req.path.startsWith('/api') ? req.path.slice(4) : req.path) || '/'
 
-  if (!['GET', 'POST', 'PATCH'].includes(req.method)) {
+  if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(req.method)) {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
@@ -834,7 +1030,30 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
   const foodIdMatch = path.match(/^\/foods\/([A-Za-z0-9]+)$/)
 
   try {
-    if (req.method === 'POST' && path === '/log') {
+    if (req.method === 'PATCH' && path === '/entry') {
+      const { date, entryId, ...changes } = body as { date?: string; entryId?: string } & EntryChanges
+      if (!date || !DATE_RX.test(date) || !entryId) {
+        res.status(400).json({ error: 'date (YYYY-MM-DD) and entryId are required — get ids from getDay' })
+        return
+      }
+      try {
+        res.json(await entryUpdate(uid, date, entryId, changes))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'DELETE' && path === '/entry') {
+      const date = String(req.query.date ?? '')
+      const entryId = String(req.query.entryId ?? '')
+      if (!DATE_RX.test(date) || !entryId) {
+        res.status(400).json({ error: 'date (YYYY-MM-DD) and entryId query params are required — get ids from getDay' })
+        return
+      }
+      try {
+        res.json(await entryDelete(uid, date, entryId))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'POST' && path === '/log') {
       try {
         res.json(await logFood(uid, body as LogFoodInput))
       } catch (e) {
