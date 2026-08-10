@@ -445,6 +445,8 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
   // band segments as [from, to] clamped to the scale
   const cuts = [0, Math.max(0, r.maintenance - 1000), Math.max(0, r.maintenance - 250), r.maintenance + 150, scaleMax]
   const segs = bands.map((b, i) => ({ ...b, from: cuts[i], to: Math.min(cuts[i + 1], scaleMax) }))
+  // the zone you'd finish in if you stopped eating now — only the fill's END matters
+  const active = segs.find((s) => eaten >= s.from && eaten < s.to) ?? segs[segs.length - 1]
 
   return (
     <div className="mt-4">
@@ -460,6 +462,10 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
           className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
           style={{ width: `${pct(eaten)}%`, background: fillColor, opacity: 0.9 }}
         />
+        {/* zone boundaries, visible across the fill */}
+        {cuts.slice(1, -1).map((c) => (
+          <div key={c} className="absolute inset-y-0 w-px bg-ink/70" style={{ left: `${pct(c)}%` }} />
+        ))}
         {/* goal tick */}
         <div
           className="absolute inset-y-0 w-0.5 bg-bone"
@@ -467,10 +473,23 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
           title={`Your goal: ${Math.round(goalKcal)} kcal`}
         />
       </div>
-      {/* band labels aligned to their segments */}
-      <div className="mt-1 flex text-[9px] leading-tight text-mist/70">
+      {/* "you are here" caret at the fill's end */}
+      <div className="relative h-3">
+        <div
+          className="absolute -translate-x-1/2 text-[9px] leading-3 transition-all duration-500"
+          style={{ left: `${pct(eaten)}%`, color: fillColor }}
+        >
+          ▲
+        </div>
+      </div>
+      {/* band labels — only the zone you're finishing in lights up */}
+      <div className="flex text-[9px] leading-tight">
         {segs.map((s) => (
-          <div key={s.id} className="truncate text-center" style={{ width: `${pct(s.to) - pct(s.from)}%` }}>
+          <div
+            key={s.id}
+            className={`truncate text-center ${s.id === active.id ? 'font-semibold' : 'text-mist/50'}`}
+            style={{ width: `${pct(s.to) - pct(s.from)}%`, ...(s.id === active.id ? { color: s.color } : {}) }}
+          >
             {s.label}
           </div>
         ))}
