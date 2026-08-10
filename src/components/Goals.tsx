@@ -615,7 +615,10 @@ interface SyncEntry {
   result?: string
   error?: string
   steps?: { key: string; report?: number; live?: number; wrote?: number | null; hr?: number | null; error?: string }[]
-  days?: { key: string; steps: number; wrote: boolean }[]
+  days?: { key: string; steps: number; wrote?: boolean }[]
+  mode?: string
+  permission?: string
+  aggBuckets?: number
 }
 
 export function SyncLog({ uid, docName }: { uid: string; docName: 'garminLog' | 'healthLog' }) {
@@ -652,8 +655,9 @@ export function SyncLog({ uid, docName }: { uid: string; docName: 'garminLog' | 
                   {d.hr ? ` · HR ${d.hr}` : ''}{d.error ? ` · ✗ ${d.error}` : ''}
                 </div>
               ))}
+              {e.mode && <div>mode: {e.mode} · buckets: {e.aggBuckets ?? '–'} · perm: {e.permission ?? '–'}</div>}
               {e.days?.map((d) => (
-                <div key={d.key}>{d.key}: {d.steps} steps{d.wrote ? '' : ' (skipped)'}</div>
+                <div key={d.key}>{d.key}: {d.steps} steps{d.wrote === false ? ' (skipped)' : ''}</div>
               ))}
             </div>
           ))}

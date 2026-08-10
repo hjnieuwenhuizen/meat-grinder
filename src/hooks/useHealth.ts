@@ -22,6 +22,8 @@ export async function syncHealthSteps(uid: string, days = 2): Promise<string> {
   start.setHours(0, 0, 0, 0)
   const end = new Date()
 
+  const perm = await Health.checkHealthPermissions({ permissions: ['READ_STEPS'] }).catch(() => null)
+
   const { aggregatedData } = await Health.queryAggregated({
     startDate: start.toISOString(),
     endDate: end.toISOString(),
@@ -29,19 +31,46 @@ export async function syncHealthSteps(uid: string, days = 2): Promise<string> {
     bucket: 'day',
   })
 
-  let wrote = 0
-  const daysLog: { key: string; steps: number; wrote: boolean }[] = []
+  // daily totals via aggregation; buckets can come back valueless (null →
+  // NaN over the bridge), so guard and fall back to raw records
+  const byDay: Record<string, number> = {}
   for (const sample of aggregatedData ?? []) {
-    const steps = Math.round(sample.value)
-    const key = keyOf(new Date(sample.startDate))
-    daysLog.push({ key, steps, wrote: steps > 0 })
-    if (!steps || steps <= 0) continue
+    const v = Number(sample.value)
+    if (Number.isFinite(v) && v > 0) byDay[keyOf(new Date(sample.startDate))] = Math.round(v)
+  }
+  let mode = 'aggregate'
+  if (!Object.keys(byDay).length) {
+    mode = 'records'
+    const { records } = await Health.queryRecords({
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      dataType: 'steps',
+    })
+    for (const r of records ?? []) {
+      const v = Number(r.value)
+      if (!Number.isFinite(v) || v <= 0) continue
+      const key = keyOf(new Date(r.startDate))
+      byDay[key] = (byDay[key] ?? 0) + Math.round(v)
+    }
+  }
+
+  let wrote = 0
+  const daysLog: { key: string; steps: number }[] = []
+  for (const [key, steps] of Object.entries(byDay)) {
+    daysLog.push({ key, steps })
     // own lane: never touches the manual `steps` field or Garmin's count
     await setDoc(doc(db, 'users', uid, 'days', key), { health: { steps } }, { merge: true })
     wrote++
   }
-  const result = wrote ? `synced steps for ${wrote} day${wrote > 1 ? 's' : ''}` : 'no step data found'
-  await pushHealthLog(uid, { at: Date.now(), result, days: daysLog })
+  const result = wrote
+    ? `synced steps for ${wrote} day${wrote > 1 ? 's' : ''} (${mode})`
+    : `no step data in Health Connect — check the Health Connect app: is Samsung Health/Google Fit listed under App permissions and syncing steps?`
+  await pushHealthLog(uid, {
+    at: Date.now(), result, mode,
+    permission: perm ? JSON.stringify(perm) : 'check failed',
+    aggBuckets: aggregatedData?.length ?? 0,
+    days: daysLog,
+  })
   return result
 }
 
