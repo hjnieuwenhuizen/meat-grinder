@@ -55,7 +55,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
   if (!day) return <div className="py-20 text-center text-mist">Loading…</div>
 
   // endurance fueling: big logged burns raise today's goal (partial, as carbs)
-  const { goal, fuel } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
+  const { goal, fuel } = applyFuel(goalFor(settings, day), day, settings.profile)
   const totals = totalsOf(day)
   const left = Math.round(goal.kcal - totals.kcal)
   const kcalPct = Math.min(totals.kcal / goal.kcal, 1)

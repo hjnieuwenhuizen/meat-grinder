@@ -79,6 +79,9 @@ function PlanCard({ settings, profile, onRetune, onManual }: {
   onManual: () => void
 }) {
   const c = planCheck(profile)
+  // pace from the goals actually saved, not a re-run of the calculator —
+  // stays honest even if the prescription rules change later
+  const storedRate = Math.round(((settings.rest.kcal - c.tdee) * 7 / 7700) * 100) / 100
   const diet = DIETS.find((d) => d.id === profile.diet)
   const activity = ACTIVITIES.find((a) => a.id === profile.activity)
   const preset = GOAL_RATES.find((g) => g.rate === profile.goalRate)
@@ -92,7 +95,7 @@ function PlanCard({ settings, profile, onRetune, onManual }: {
       '# Meat Grinder — Goals (smart plan)',
       `Profile: ${profile.sex}, ${age}y, ${profile.heightCm}cm, ${profile.weightKg}kg · ${activity?.label ?? profile.activity} · ${profile.trainingDays ?? 0} training days/wk`,
       `Diet: ${diet?.label ?? profile.diet} · protein ${profile.proteinPerKg ?? diet?.proteinPerKg}g/kg`,
-      `Pace: ${preset?.label ?? 'Custom target'} → honest ${c.actualRate} kg/week (${c.ratePctBw}% BW) · rest-day maintenance ~${c.tdee} kcal`,
+      `Pace: ${preset?.label ?? 'Custom target'} → honest ${storedRate} kg/week · rest-day maintenance ~${c.tdee} kcal`,
       `Rest day: ${settings.rest.kcal} kcal | P ${settings.rest.protein}g | C ${settings.rest.carbs}g | F ${settings.rest.fat}g`,
       ...(settings.trainingEnabled
         ? [`Training day: ${settings.training.kcal} kcal | P ${settings.training.protein}g | C ${settings.training.carbs}g | F ${settings.training.fat}g`]
@@ -131,10 +134,10 @@ function PlanCard({ settings, profile, onRetune, onManual }: {
             </div>
             <div className="rounded-xl border border-edge bg-ink p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-mist">Honest pace</div>
-              <div className={`mt-0.5 text-lg font-semibold tabular-nums ${c.actualRate < 0 ? 'text-grind' : ''}`}>
-                {c.actualRate > 0 ? '+' : ''}{c.actualRate}
+              <div className={`mt-0.5 text-lg font-semibold tabular-nums ${storedRate < 0 ? 'text-grind' : ''}`}>
+                {storedRate > 0 ? '+' : ''}{storedRate}
               </div>
-              <div className="text-[11px] text-mist">kg/week · {c.ratePctBw}% BW{c.capped ? ' · capped' : ''}</div>
+              <div className="text-[11px] text-mist">kg/week · {Math.round((Math.abs(storedRate) / profile.weightKg) * 1000) / 10}% BW</div>
             </div>
           </div>
 

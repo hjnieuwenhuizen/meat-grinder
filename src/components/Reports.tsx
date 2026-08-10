@@ -87,7 +87,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
   const hitsOf = (k: string): { protein: boolean; kcal: boolean } | null => {
     const day = days?.[k]
     if (!day?.entries?.length) return null
-    const { goal: g } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
+    const { goal: g } = applyFuel(goalFor(settings, day), day, settings.profile)
     const t = totalsOf(day)
     return {
       protein: t.protein >= g.protein * 0.95,
@@ -227,7 +227,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
               {keys.map((k) => {
                 const day = days[k]
                 const t = totalsOf(day)
-                const { goal: g } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
+                const { goal: g } = applyFuel(goalFor(settings, day), day, settings.profile)
                 const h = t.kcal > 0 ? Math.max((t.kcal / maxKcal) * 100, 3) : 0
                 const off = t.kcal > 0 && (t.kcal < g.kcal * 0.9 || t.kcal > g.kcal * 1.1)
                 const future = k > todayKey()

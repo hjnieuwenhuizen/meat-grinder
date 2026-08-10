@@ -46,7 +46,7 @@ export default function GoalWizard({ initial, onSave, onClose }: {
       ? Math.round(((Number(customKcal) - restTdee(baseProfile)) * 7 / KCAL_PER_KG) * 100) / 100
       : null
   const profile: Profile | null = baseProfile
-    ? { ...baseProfile, goalRate: customRate ?? goalRate }
+    ? { ...baseProfile, goalRate: customRate ?? goalRate, ...(customRate !== null ? { customTarget: true } : {}) }
     : null
 
   const youValid =
@@ -225,7 +225,7 @@ export default function GoalWizard({ initial, onSave, onClose }: {
             return (
               <p className="rounded-lg border border-over/40 bg-over/10 p-2 text-[11px] text-over">
                 {c.tooFast && <>That's {c.ratePctBw}% of bodyweight/week — beyond the muscle-safe band of 0.4–0.7%. Fine for a short block; not a lifestyle. </>}
-                {c.capped && <>The deficit is capped at 25% of your maintenance, so the plan lands at {c.targetKcal} kcal — the honest pace is <b>{c.actualRate} kg/week</b>, not the pace you picked. </>}
+                {c.capped && <>Preset paces prescribe at most a {c.capPct}% deficit, so the plan lands at {c.targetKcal} kcal — the honest pace is <b>{c.actualRate} kg/week</b>, not the pace you picked.{!profile.customTarget && <> Want deeper? Type a custom target (hard max 25%).</>} </>}
                 {c.belowBmr && !c.capped && <>Heads-up: this sits below your estimated BMR ({Math.round(bmr(profile))} kcal). Not a hard stop — BMR is an estimate, not a safety threshold — but let your weight trend and recovery be the judge.</>}
               </p>
             )
@@ -245,7 +245,7 @@ export default function GoalWizard({ initial, onSave, onClose }: {
               <div className="mt-1 text-xs text-mist">
                 {profile && (() => {
                   const c = planCheck(profile)
-                  return <>honest pace ≈ <b className="text-bone">{c.actualRate > 0 ? '+' : ''}{c.actualRate} kg/week</b> ({c.ratePctBw}% BW{c.capped ? ', after the 25% deficit cap' : ''})</>
+                  return <>honest pace ≈ <b className="text-bone">{c.actualRate > 0 ? '+' : ''}{c.actualRate} kg/week</b> ({c.deficitPctTdee > 0 ? `${c.deficitPctTdee}% deficit · ` : ''}{c.ratePctBw}% BW{c.capped ? `, after the ${c.capPct}% cap` : ''})</>
                 })()} · retune any time — past days keep the goals they were logged under
               </div>
             </div>

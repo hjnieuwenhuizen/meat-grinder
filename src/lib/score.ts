@@ -26,7 +26,7 @@ export const SCORE_ITEMS: { key: keyof ScoreBreakdown; emoji: string; label: str
 export const MAX_POINTS = SCORE_ITEMS.reduce((s, i) => s + i.max, 0)
 
 export function scoreDay(day: DayDoc, settings: Settings): { points: number; steps: number; km: number; breakdown: ScoreBreakdown } {
-  const { goal } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
+  const { goal } = applyFuel(goalFor(settings, day), day, settings.profile)
   const totals = totalsOf(day)
   const logged = day.entries.length > 0
   const steps = stepsOf(day)

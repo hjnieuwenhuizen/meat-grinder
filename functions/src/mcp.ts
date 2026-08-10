@@ -142,12 +142,17 @@ const energyOf = (settings: Record<string, unknown>, day: DayDoc, eatenKcal: num
   }
 }
 
-// endurance fueling: 50% of logged burn above 400 kcal (cap 1000) added to
-// the goal as carbs — partial on purpose, wearable calories overestimate
+// endurance fueling: 60% of estimated burn above 400 kcal (cap 1000) added to
+// the goal as carbs — partial on purpose. Runs use ≈1 kcal/kg/km instead of
+// wearable calories (which run hot). MUST mirror applyFuel in src/lib/coach.ts.
 const fuelOf = (day: DayDoc, settings: Record<string, unknown>): number => {
-  if (!settings.profile) return 0
-  const ex = (day.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
-  return Math.min(1000, Math.max(0, Math.round((0.5 * (ex - 400)) / 10) * 10))
+  const p = settings.profile as { weightKg?: number } | undefined
+  if (!p) return 0
+  const ex = (day.workouts ?? []).reduce(
+    (s, w) => s + (w.type === 'run' && p.weightKg && w.distance ? p.weightKg * w.distance : w.kcal ?? 0),
+    0,
+  )
+  return Math.min(1000, Math.max(0, Math.round((0.6 * (ex - 400)) / 10) * 10))
 }
 
 const fueledGoal = (day: DayDoc, settings: Record<string, unknown>): { goal: Macros | null; fuel: number } => {
@@ -655,14 +660,19 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
   proteinPerKg, goalRate kg/week).
 - Maintenance = Mifflin-St Jeor BMR × lifestyle factor (1.2–1.8). Training is deliberately
   NOT in the factor — workouts are logged individually, so baselines assume a rest day.
-- Deficit guardrails: max deficit = 25% of rest TDEE; pace shown as % bodyweight/week
-  (muscle-safe cutting band ≈ 0.4–0.7%). When capped, the displayed pace is recomputed
-  from the ACTUAL deficit.
+- Deficit guardrails: preset paces prescribe at most a 20% deficit of rest TDEE (the
+  evidence-preferred starting point for muscle retention); 25% is the HARD cap, reachable
+  only via an explicit custom kcal target. Pace shown as % bodyweight/week (muscle-safe
+  cutting band ≈ 0.4–0.7%). When a cap bites, the displayed pace is recomputed from the
+  ACTUAL deficit. The equation TDEE is a starting estimate — the weight-trend calibration
+  in /range has the final vote.
 - GOAL SNAPSHOTS: each day freezes its goals the first time it is written. Later Settings
   changes apply from today forward — historical days, scores and reports never change.
-- ENDURANCE FUEL: when a day's logged workout burn exceeds 400 kcal, that day's goal grows
-  by 50% of the excess (capped +1000), added as carbs and labelled. A gym session adds ~0;
-  an 18 km run adds ~650. This is the ONLY exercise add-back.
+- ENDURANCE FUEL: when a day's estimated workout burn exceeds 400 kcal, that day's goal
+  grows by 60% of the excess (capped +1000), added as carbs and labelled. Runs are estimated
+  from physics (≈1 kcal × kg × km) instead of wearable calories, which run 15–20% hot; other
+  activities fall back to logged kcal. A gym session adds ~0; an 18 km run adds ~670.
+  This is the ONLY exercise add-back.
 - Energy zones (informational): eaten vs (rest TDEE + logged exercise) → extreme cut /
   aggressive / moderate / mild / maintenance / surplus, with est. kg/week.
 

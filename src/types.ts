@@ -31,6 +31,8 @@ export interface Profile {
   trainingDays?: number
   /** protein target in g/kg — independent of diet style */
   proteinPerKg?: number
+  /** goal came from a typed kcal target — allowed up to the 25% hard cap */
+  customTarget?: boolean
 }
 
 export interface Settings {

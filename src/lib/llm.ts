@@ -12,7 +12,7 @@ const line = (t: Macros) =>
   `${Math.round(t.kcal)} kcal | P ${r(t.protein)}g | C ${r(t.carbs)}g | F ${r(t.fat)}g`
 
 export function dayReport(key: string, day: DayDoc, settings: Settings): string {
-  const { goal, fuel } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
+  const { goal, fuel } = applyFuel(goalFor(settings, day), day, settings.profile)
   const totals = totalsOf(day)
   const tag = settings.trainingEnabled ? (day.training ? ' — Training day' : ' — Rest day') : ''
 
@@ -48,7 +48,7 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
 
   return [
     `# Meat Grinder — Daily log — ${fmtLong(key)}${tag}`,
-    `Goal: ${line(goal)}${fuel > 0 ? ` (incl. +${fuel} kcal endurance fuel — 50% of logged burn above 400, as carbs)` : ''}`,
+    `Goal: ${line(goal)}${fuel > 0 ? ` (incl. +${fuel} kcal endurance fuel — 60% of estimated burn above 400, as carbs; runs estimated at 1 kcal/kg/km)` : ''}`,
     `Eaten: ${line(totals)}`,
     `Remaining: ${line({
       kcal: goal.kcal - totals.kcal,
@@ -96,7 +96,7 @@ export function rangeReport(
   const rows = keys.flatMap((k) => {
     const day = daysByKey[k]
     if (!day?.entries?.length) return [`- ${fmtDay(k)} (${k}): no entries`]
-    const { goal, fuel } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
+    const { goal, fuel } = applyFuel(goalFor(settings, day), day, settings.profile)
     const t = totalsOf(day)
     const tag = settings.trainingEnabled && day.training ? ' [training]' : ''
     const trained = day.workouts?.length

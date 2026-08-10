@@ -7,9 +7,10 @@
 //   double-counted in the baseline.
 // - 1 kg of body fat ≈ 7 700 kcal, so a target rate in kg/week maps to a
 //   daily calorie offset of rate × 7700 / 7 = rate × 1100.
-// - Protein is set per-kg by diet style; fat has a hormonal floor of
-//   ~0.6 g/kg; carbs take whatever energy remains.
-import type { ActivityId, DietId, DayDoc, GoalSnapshot, Macros, Profile } from '../types'
+// - Protein is set per-kg by diet style; fat keeps a practical floor of
+//   ~0.7 g/kg (a coaching guardrail, not a proven hormonal threshold);
+//   carbs take whatever energy remains.
+import type { ActivityId, DietId, DayDoc, GoalSnapshot, Macros, Profile, Workout } from '../types'
 
 export const KCAL_PER_KG = 7700
 
@@ -84,17 +85,23 @@ const macrosFor = (p: Profile, kcal: number, extraCarbsKcal = 0): Macros => {
 }
 
 /** guardrails, per coaching review:
- *  - the primary cap is deficit ≤ 25% of rest TDEE (BMR is an ESTIMATE of
- *    resting burn, not a magic safety threshold — it's advisory only)
+ *  - preset paces prescribe at most a 20% deficit of rest TDEE — the
+ *    evidence-preferred starting point for keeping muscle; 25% stays as
+ *    the HARD cap, reachable only via an explicit custom kcal target
+ *    (BMR is an ESTIMATE of resting burn, not a safety threshold —
+ *    it's advisory only)
  *  - rate is expressed as % bodyweight/week (muscle-safe band ~0.4–0.7%)
- *  - when the cap bites, the honest rate is recomputed from the ACTUAL
+ *  - when a cap bites, the honest rate is recomputed from the ACTUAL
  *    deficit, never the requested one */
 export const MAX_DEFICIT_PCT = 0.25
+export const TARGET_DEFICIT_PCT = 0.2
+const deficitCapOf = (p: Profile): number => (p.customTarget ? MAX_DEFICIT_PCT : TARGET_DEFICIT_PCT)
 
 export const planCheck = (p: Profile) => {
   const tdee = restTdee(p)
   const raw = tdee + (p.goalRate * KCAL_PER_KG) / 7
-  const floorKcal = tdee * (1 - MAX_DEFICIT_PCT)
+  const capPct = deficitCapOf(p)
+  const floorKcal = tdee * (1 - capPct)
   const target = Math.max(raw, floorKcal)
   const actualRate = Math.round(((target - tdee) * 7 / KCAL_PER_KG) * 100) / 100
   const ratePctBw = Math.round((Math.abs(p.goalRate) / p.weightKg) * 1000) / 10
@@ -108,13 +115,14 @@ export const planCheck = (p: Profile) => {
     ratePctBw,
     tooFast: p.goalRate < 0 && ratePctBw > 0.85,
     deficitPctTdee: p.goalRate < 0 ? Math.round(((tdee - target) / tdee) * 100) : 0,
+    capPct: Math.round(capPct * 100),
   }
 }
 
 /** the full plan the wizard writes into Settings */
 export const buildPlan = (p: Profile): GoalSnapshot => {
-  // cap the deficit at 25% of rest TDEE, whatever pace was requested
-  const restKcal = Math.max(restTdee(p) * (1 - MAX_DEFICIT_PCT), restTdee(p) + (p.goalRate * KCAL_PER_KG) / 7)
+  // presets cap the deficit at 20% of rest TDEE; explicit custom targets may go to 25%
+  const restKcal = Math.max(restTdee(p) * (1 - deficitCapOf(p)), restTdee(p) + (p.goalRate * KCAL_PER_KG) / 7)
   // training days earn a modest bump; carb-tolerant diets put it in carbs,
   // keto/carnivore put it in fat
   const bump = 300
@@ -198,15 +206,22 @@ export const energyReadout = (
 /* ---------- endurance fueling layer ----------
  * A fixed training-day goal is fine for a gym session; it is nonsense for an
  * 18 km run. When a day's LOGGED exercise burn is large, the goal itself
- * earns a fuel bonus: 50% of the burn above 400 kcal, capped at +1000,
- * given as carbohydrate. Deliberately partial — wearable calories
- * overestimate, so we never credit them 1:1. */
+ * earns a fuel bonus: 60% of the burn above 400 kcal, capped at +1000,
+ * given as carbohydrate. Deliberately partial — we never credit burn 1:1.
+ * Runs use a transparent physics estimate (≈1 kcal per kg per km) instead
+ * of wearable calories, which routinely run 15–20% hot. */
 export const FUEL_THRESHOLD = 400
-export const FUEL_FRACTION = 0.5
+export const FUEL_FRACTION = 0.6
 export const FUEL_CAP = 1000
+export const RUN_KCAL_PER_KG_KM = 1
 
-export const fuelBonusKcal = (day: Pick<DayDoc, 'workouts'> | null | undefined): number => {
-  const ex = (day?.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
+const workoutBurn = (w: Pick<Workout, 'type' | 'kcal' | 'distance'>, weightKg?: number): number =>
+  w.type === 'run' && weightKg && w.distance
+    ? RUN_KCAL_PER_KG_KM * weightKg * w.distance
+    : w.kcal ?? 0
+
+export const fuelBonusKcal = (day: Pick<DayDoc, 'workouts'> | null | undefined, weightKg?: number): number => {
+  const ex = (day?.workouts ?? []).reduce((s, w) => s + workoutBurn(w, weightKg), 0)
   return Math.min(FUEL_CAP, Math.max(0, Math.round((FUEL_FRACTION * (ex - FUEL_THRESHOLD)) / 10) * 10))
 }
 
@@ -214,10 +229,10 @@ export const fuelBonusKcal = (day: Pick<DayDoc, 'workouts'> | null | undefined):
 export const applyFuel = (
   goal: Macros,
   day: Pick<DayDoc, 'workouts'> | null | undefined,
-  enabled: boolean,
+  profile: Profile | null | undefined,
 ): { goal: Macros; fuel: number } => {
-  if (!enabled) return { goal, fuel: 0 }
-  const fuel = fuelBonusKcal(day)
+  if (!profile) return { goal, fuel: 0 }
+  const fuel = fuelBonusKcal(day, profile.weightKg)
   if (!fuel) return { goal, fuel: 0 }
   return {
     goal: { ...goal, kcal: goal.kcal + fuel, carbs: goal.carbs + Math.round(fuel / 4 / 5) * 5 },
