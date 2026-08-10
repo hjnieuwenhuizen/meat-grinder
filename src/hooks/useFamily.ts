@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   collection, doc, onSnapshot, getDoc, getDocs, setDoc, updateDoc, deleteDoc, deleteField,
-  query, where, getAggregateFromServer, sum,
+  query, where,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { startOfWeek, todayKey, addDays } from '../lib/dates'
@@ -54,23 +54,23 @@ export function useFamily(uid: string) {
     })
   }, [code])
 
-  // all-time step totals per member — server-side sums, no doc downloads.
-  // Refreshed when the member list or this week's scores change.
+  // all-time step totals per member — one collection read, summed client-side
+  // (family scale; simpler and more debuggable than server aggregation)
   const memberKey = family ? Object.keys(family.members).sort().join(',') : ''
   useEffect(() => {
     if (!code || !memberKey) { setAllTimeSteps({}); return }
     let on = true
-    void Promise.all(
-      memberKey.split(',').map(async (u) => {
-        const agg = await getAggregateFromServer(
-          query(collection(famRef(code), 'scores'), where('uid', '==', u)),
-          { steps: sum('steps') },
-        )
-        return [u, agg.data().steps] as const
-      }),
-    )
-      .then((pairs) => { if (on) setAllTimeSteps(Object.fromEntries(pairs)) })
-      .catch(() => {})
+    void getDocs(collection(famRef(code), 'scores'))
+      .then((snap) => {
+        if (!on) return
+        const totals: Record<string, number> = {}
+        snap.docs.forEach((d) => {
+          const sc = d.data() as ScoreDoc
+          totals[sc.uid] = (totals[sc.uid] ?? 0) + (sc.steps || 0)
+        })
+        setAllTimeSteps(totals)
+      })
+      .catch((e) => console.warn('all-time steps read failed:', e))
     return () => { on = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, memberKey, scores])

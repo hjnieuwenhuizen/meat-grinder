@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { doc, onSnapshot } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import GoalWizard from './GoalWizard'
 import { ACTIVITIES, DIETS, GOAL_RATES, planCheck } from '../lib/coach'
 import { useGarmin } from '../hooks/useGarmin'
@@ -214,6 +216,7 @@ function PhoneHealthPanel({ uid }: { uid: string }) {
         </button>
       )}
       {h.result && <p className="mt-3 text-xs text-mist">{h.result}</p>}
+      <SyncLog uid={uid} docName="healthLog" />
     </Panel>
   )
 }
@@ -576,6 +579,7 @@ function GarminPanel({ uid }: { uid: string }) {
       {msg && (
         <p className={`mt-3 text-xs ${msg.ok ? 'text-grind' : 'text-over'}`}>{msg.text}</p>
       )}
+      <SyncLog uid={uid} docName="garminLog" />
     </Panel>
   )
 }
@@ -596,6 +600,65 @@ function GoalGrid({ title, goal, onChange }: {
           />
         ))}
       </div>
+    </div>
+  )
+}
+
+
+/* ---------- sync debug trail: last runs of Garmin / Health Connect ---------- */
+
+interface SyncEntry {
+  at: number
+  trigger?: string
+  full?: boolean
+  summary?: string
+  result?: string
+  error?: string
+  steps?: { key: string; report?: number; live?: number; wrote?: number | null; hr?: number | null; error?: string }[]
+  days?: { key: string; steps: number; wrote: boolean }[]
+}
+
+export function SyncLog({ uid, docName }: { uid: string; docName: 'garminLog' | 'healthLog' }) {
+  const [entries, setEntries] = useState<SyncEntry[]>([])
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    return onSnapshot(doc(db, 'users', uid, 'meta', docName), (snap) => {
+      setEntries(((snap.data()?.entries ?? []) as SyncEntry[]).slice(0, 10))
+    })
+  }, [uid, docName])
+
+  if (!entries.length) return null
+  const fmt = (t: number) =>
+    new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+  return (
+    <div className="mt-3 border-t border-edge pt-2">
+      <button type="button" onClick={() => setOpen(!open)} className="text-[11px] font-medium text-mist underline-offset-2 hover:text-bone hover:underline">
+        {open ? 'Hide sync log' : `Sync log (${entries.length})`}
+      </button>
+      {open && (
+        <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1 font-mono text-[10px] leading-relaxed text-mist">
+          {entries.map((e, i) => (
+            <div key={i} className="rounded-lg border border-edge bg-ink p-2">
+              <div className="text-bone">
+                {fmt(e.at)}{e.trigger ? ` · ${e.trigger}` : ''}{e.full ? ' · full 30d' : ''}
+              </div>
+              {e.error && <div className="text-over">✗ {e.error}</div>}
+              {(e.summary || e.result) && <div>{e.summary ?? e.result}</div>}
+              {e.steps?.map((d) => (
+                <div key={d.key}>
+                  {d.key}: report {d.report ?? '–'} · live {d.live ?? '–'} → wrote {d.wrote ?? 'nothing'}
+                  {d.hr ? ` · HR ${d.hr}` : ''}{d.error ? ` · ✗ ${d.error}` : ''}
+                </div>
+              ))}
+              {e.days?.map((d) => (
+                <div key={d.key}>{d.key}: {d.steps} steps{d.wrote ? '' : ' (skipped)'}</div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

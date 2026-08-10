@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { Health } from 'capacitor-health'
-import { doc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { keyOf, todayKey, addDays, fromKey } from '../lib/dates'
 
@@ -30,15 +30,28 @@ export async function syncHealthSteps(uid: string, days = 2): Promise<string> {
   })
 
   let wrote = 0
+  const daysLog: { key: string; steps: number; wrote: boolean }[] = []
   for (const sample of aggregatedData ?? []) {
     const steps = Math.round(sample.value)
-    if (!steps || steps <= 0) continue
     const key = keyOf(new Date(sample.startDate))
+    daysLog.push({ key, steps, wrote: steps > 0 })
+    if (!steps || steps <= 0) continue
     // own lane: never touches the manual `steps` field or Garmin's count
     await setDoc(doc(db, 'users', uid, 'days', key), { health: { steps } }, { merge: true })
     wrote++
   }
-  return wrote ? `synced steps for ${wrote} day${wrote > 1 ? 's' : ''}` : 'no step data found'
+  const result = wrote ? `synced steps for ${wrote} day${wrote > 1 ? 's' : ''}` : 'no step data found'
+  await pushHealthLog(uid, { at: Date.now(), result, days: daysLog })
+  return result
+}
+
+// visible sync trail (last 20 runs) at users/{uid}/meta/healthLog
+async function pushHealthLog(uid: string, entry: Record<string, unknown>) {
+  try {
+    const ref = doc(db, 'users', uid, 'meta', 'healthLog')
+    const prev = ((await getDoc(ref)).data()?.entries ?? []) as unknown[]
+    await setDoc(ref, { entries: [entry, ...prev].slice(0, 20) })
+  } catch { /* logging must never break a sync */ }
 }
 
 export function useHealth(uid: string) {
@@ -90,5 +103,7 @@ export function useHealth(uid: string) {
 /** fire-and-forget auto sync — call once on app start */
 export function autoSyncHealth(uid: string) {
   if (!isNativeApp() || localStorage.getItem(ENABLED_FLAG) !== '1') return
-  void syncHealthSteps(uid).catch(() => {})
+  void syncHealthSteps(uid).catch((e) =>
+    pushHealthLog(uid, { at: Date.now(), error: e instanceof Error ? e.message : String(e) }),
+  )
 }

@@ -120,7 +120,18 @@ async function clientFor(uid: string): Promise<GarminConnect> {
   return client
 }
 
-async function syncUser(uid: string, full = false): Promise<string> {
+// visible sync trail for debugging — last 20 runs at users/{uid}/meta/garminLog
+const garminLogRef = (uid: string) => db.doc(`users/${uid}/meta/garminLog`)
+async function pushGarminLog(uid: string, entry: Record<string, unknown>) {
+  try {
+    const prev = ((await garminLogRef(uid).get()).data()?.entries ?? []) as unknown[]
+    await garminLogRef(uid).set({ entries: [entry, ...prev].slice(0, 20) })
+  } catch (e) {
+    logger.warn(`garminLog write failed for ${uid}: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+async function syncUser(uid: string, full = false, trigger = 'manual'): Promise<string> {
   const client = await clientFor(uid)
   const settings = (await db.doc(`users/${uid}/meta/settings`).get()).data() ?? {}
 
@@ -167,33 +178,42 @@ async function syncUser(uid: string, full = false): Promise<string> {
     }
   }
 
-  // daily wellness: steps + resting heart rate for yesterday/today
+  // daily wellness: steps + resting heart rate for yesterday/today.
+  // Steps come from BOTH endpoints — the daily report (lags until a full
+  // watch sync) AND the live user summary (what the Garmin app shows) — and
+  // we take the max: step counts only ever grow during a day.
   let profileName: string | null = null
+  const stepsLog: Record<string, unknown>[] = []
   for (const key of sleepKeys) {
     const date = new Date(`${key}T12:00:00`)
     const g: { steps?: number | null; restingHr?: number | null } = {}
+    let report = 0
+    let live = 0
+    let stepErr: string | null = null
     try {
-      let steps = await client.getSteps(date)
-      if (!steps || steps <= 0) {
-        // the daily-steps REPORT lags until the watch does a full sync; the
-        // live user summary is the number the Garmin app itself displays
-        profileName ??= (await client.getUserProfile()).displayName
-        const sum = await client.client.get<{ totalSteps?: number }>(
-          `https://connectapi.garmin.com/usersummary-service/usersummary/daily/${profileName}?calendarDate=${key}`,
-        )
-        steps = sum?.totalSteps ?? 0
-        logger.info(`${uid} steps ${key}: report=0, live summary=${steps}`)
-      }
-      if (steps && steps > 0) g.steps = steps
+      report = (await client.getSteps(date)) || 0
     } catch (e) {
-      logger.info(`${uid} no steps for ${key}: ${(e as Error).message}`)
+      stepErr = `report: ${(e as Error).message}`
     }
+    try {
+      profileName ??= (await client.getUserProfile()).displayName
+      const sum = await client.client.get<{ totalSteps?: number }>(
+        `https://connectapi.garmin.com/usersummary-service/usersummary/daily/${profileName}?calendarDate=${key}`,
+      )
+      live = sum?.totalSteps ?? 0
+    } catch (e) {
+      stepErr = `${stepErr ? stepErr + ' · ' : ''}live: ${(e as Error).message}`
+    }
+    const best = Math.max(report, live)
+    if (best > 0) g.steps = best
     try {
       const hr = await client.getHeartRate(date)
       if (hr?.restingHeartRate) g.restingHr = hr.restingHeartRate
     } catch (e) {
       logger.info(`${uid} no heart rate for ${key}: ${(e as Error).message}`)
     }
+    stepsLog.push({ key, report, live, wrote: best > 0 ? best : null, hr: g.restingHr ?? null, ...(stepErr ? { error: stepErr } : {}) })
+    logger.info(`${uid} steps ${key}: report=${report} live=${live} wrote=${best}${stepErr ? ` err=${stepErr}` : ''}`)
     if (g.steps == null && g.restingHr == null) continue
     const day = await loadDay(key)
     const merged = { ...(day.garmin ?? {}), ...g }
@@ -280,6 +300,7 @@ async function syncUser(uid: string, full = false): Promise<string> {
     { merge: true },
   )
   logger.info(`Synced ${uid}: ${summary}`)
+  await pushGarminLog(uid, { at: Date.now(), trigger, full, summary, steps: stepsLog })
   return summary
 }
 
@@ -292,10 +313,12 @@ export async function syncIfStale(uid: string, maxAgeMs = 10 * 60_000): Promise<
   if (!status?.connected) return 'not-connected'
   if (status.lastSync && Date.now() - status.lastSync < maxAgeMs) return 'fresh'
   try {
-    await syncUser(uid)
+    await syncUser(uid, false, 'auto (app open / AI read)')
     return 'synced'
   } catch (e) {
-    logger.warn(`syncIfStale failed for ${uid}: ${e instanceof Error ? e.message : String(e)}`)
+    const msg = e instanceof Error ? e.message : String(e)
+    logger.warn(`syncIfStale failed for ${uid}: ${msg}`)
+    await pushGarminLog(uid, { at: Date.now(), trigger: 'auto (app open / AI read)', error: msg })
     return 'sync-failed'
   }
 }
@@ -478,11 +501,12 @@ export const garminSync = onSchedule(
           const ok = await tryPendingLogin(uid)
           if (!ok) continue
         }
-        await syncUser(uid)
+        await syncUser(uid, false, 'scheduled (every 3h)')
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         logger.warn(`Sync failed for ${uid}: ${msg}`)
         await statusRef(uid).set({ lastError: msg, lastErrorAt: Date.now() }, { merge: true })
+        await pushGarminLog(uid, { at: Date.now(), trigger: 'scheduled (every 3h)', error: msg })
       }
     }
   },
