@@ -468,7 +468,9 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
   // ONE semantic rule: position and colour both come from estimated energy
   // balance. Target adherence ("333 over") is shown separately in the corner
   // and never colours this bar.
-  const balanceColor = complete ? active.color : 'var(--color-mist)'
+  // finished days wear their verdict colour; a day in progress is just
+  // progress — brand green, no muddy neutral
+  const balanceColor = complete ? active.color : 'var(--color-grind)'
 
   return (
     <div className="mt-4">
@@ -483,7 +485,7 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
         {/* eaten fill — coloured by where the day LANDS, not by target adherence */}
         <div
           className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
-          style={{ width: `${pct(eaten)}%`, background: balanceColor, opacity: complete ? 0.9 : 0.45 }}
+          style={{ width: `${pct(eaten)}%`, background: balanceColor, opacity: complete ? 0.9 : 0.6 }}
         />
         {/* zone boundaries, visible across the fill */}
         {cuts.slice(1, -1).map((c) => (
