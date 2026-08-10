@@ -176,7 +176,10 @@ export const kgPerWeek = (delta: number): number =>
 
 export interface EnergyReadout {
   maintenance: number
+  /** exercise burn used in the math — physics estimate for runs */
   exerciseKcal: number
+  /** what the wearable claimed, for honest side-by-side display */
+  watchKcal: number
   eaten: number
   delta: number
   zone: EnergyZone
@@ -197,10 +200,12 @@ export const energyReadout = (
   day: Pick<DayDoc, 'workouts'> | null | undefined,
   eatenKcal: number,
 ): EnergyReadout => {
-  const exerciseKcal = (day?.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
+  // same estimator the fuel layer uses — one number, no double standards
+  const exerciseKcal = Math.round((day?.workouts ?? []).reduce((s, w) => s + workoutBurn(w, p.weightKg), 0))
+  const watchKcal = Math.round((day?.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0))
   const maintenance = Math.round(restTdee(p) + exerciseKcal)
   const delta = Math.round(eatenKcal - maintenance)
-  return { maintenance, exerciseKcal, eaten: Math.round(eatenKcal), delta, zone: zoneFor(delta), kgWeek: kgPerWeek(delta) }
+  return { maintenance, exerciseKcal, watchKcal, eaten: Math.round(eatenKcal), delta, zone: zoneFor(delta), kgWeek: kgPerWeek(delta) }
 }
 
 /* ---------- endurance fueling layer ----------

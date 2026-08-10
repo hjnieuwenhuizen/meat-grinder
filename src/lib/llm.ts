@@ -61,7 +61,7 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
       if (settings.profile) {
         const r = energyReadout(settings.profile, day, totals.kcal)
         extra.push(
-          `Energy: ${r.eaten} kcal eaten vs ~${r.maintenance} burned${r.exerciseKcal ? ` (incl. ${r.exerciseKcal} exercise)` : ''} → ${r.delta > 0 ? '+' : ''}${r.delta} kcal · ${r.zone.label}${r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week at this pace` : ''}`,
+          `Energy: ${r.eaten} kcal eaten vs ~${r.maintenance} burned${r.exerciseKcal ? ` (incl. ~${r.exerciseKcal} exercise${r.watchKcal > r.exerciseKcal ? `; watch claimed ${r.watchKcal}` : ''})` : ''} → ${r.delta > 0 ? '+' : ''}${r.delta} kcal · ${r.zone.label}${r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week at this pace` : ''}`,
         )
       }
       if (day.body?.weightKg) {

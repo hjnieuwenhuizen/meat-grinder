@@ -8,7 +8,7 @@ import { MEALS, defaultMealNow } from '../lib/meals'
 import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
-import { energyReadout, heroBands, applyFuel } from '../lib/coach'
+import { energyReadout, heroBands, applyFuel, kgPerWeek } from '../lib/coach'
 import type { BodyLog, DayDoc, Profile } from '../types'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
@@ -172,7 +172,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
               <span className="text-mist">/ {Math.round(goal.kcal)}</span>
             </div>
             {fuel > 0 && (
-              <div className="mt-0.5 text-[11px] text-grind" title="50% of logged exercise burn above 400 kcal, added as carbs — partial on purpose: watch calories overestimate">
+              <div className="mt-0.5 text-[11px] text-grind" title="60% of estimated exercise burn above 400 kcal, added as carbs — runs estimated from distance × body weight; watch calories overestimate">
                 incl. +{fuel} endurance fuel 🏃
               </div>
             )}
@@ -183,7 +183,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
           </div>
         </div>
         {settings.profile ? (
-          <ZonedKcalBar profile={settings.profile} day={day} eaten={totals.kcal} goalKcal={goal.kcal} fillColor={kcalColor} />
+          <ZonedKcalBar profile={settings.profile} day={day} eaten={totals.kcal} goalKcal={goal.kcal} fillColor={kcalColor} complete={key < todayKey()} />
         ) : (
           <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-edge">
             <div
@@ -206,7 +206,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
       </Panel>
 
       {/* today's mission */}
-      <Mission goal={goal} totals={totals} foods={foods} onRescue={() => setRescuing(true)} />
+      <Mission goal={goal} totals={totals} day={day} foods={foods} onRescue={() => setRescuing(true)} />
 
       {/* macro rings — protein is a hard target; carbs/fat are flexible energy
           levers judged by the calorie budget, never by their own line */}
@@ -430,14 +430,18 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
 // The main calorie bar, zoned against today's ACTUAL burn (rest metabolism +
 // logged exercise). Bands move right when you train. Everything here is an
 // estimate and labelled as such — and the goal budget never eats back burn.
-function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
+function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor, complete }: {
   profile: Profile
   day: DayDoc
   eaten: number
   goalKcal: number
   fillColor: string
+  /** past days are finished stories; today is still being written */
+  complete: boolean
 }) {
   const r = energyReadout(profile, day, eaten)
+  // the PLAN's position vs today's estimated burn — what the target means
+  const plannedDelta = Math.round(goalKcal - r.maintenance)
   const bands = heroBands(r.maintenance)
   const scaleMax = Math.max(goalKcal, r.maintenance + 400)
   const pct = (v: number) => Math.min(100, Math.max(0, (v / scaleMax) * 100))
@@ -445,7 +449,7 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
   // band segments as [from, to] clamped to the scale
   const cuts = [0, Math.max(0, r.maintenance - 1000), Math.max(0, r.maintenance - 250), r.maintenance + 150, scaleMax]
   const segs = bands.map((b, i) => ({ ...b, from: cuts[i], to: Math.min(cuts[i + 1], scaleMax) }))
-  // the zone you'd finish in if you stopped eating now — only the fill's END matters
+  // the zone the day FINISHED in — only meaningful once the day is complete
   const active = segs.find((s) => eaten >= s.from && eaten < s.to) ?? segs[segs.length - 1]
 
   return (
@@ -473,34 +477,45 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
           title={`Your goal: ${Math.round(goalKcal)} kcal`}
         />
       </div>
-      {/* "you are here" caret at the fill's end */}
+      {/* "you are here" caret at the fill's end — mid-day it's just "now", not a verdict */}
       <div className="relative h-3">
         <div
-          className="absolute -translate-x-1/2 text-[9px] leading-3 transition-all duration-500"
-          style={{ left: `${pct(eaten)}%`, color: fillColor }}
+          className="absolute flex -translate-x-1/2 items-center gap-0.5 text-[9px] leading-3 transition-all duration-500"
+          style={{ left: `${pct(eaten)}%`, color: complete ? fillColor : 'var(--color-mist)' }}
         >
-          ▲
+          ▲{!complete && <span>now</span>}
         </div>
       </div>
-      {/* band labels — only the zone you're finishing in lights up */}
+      {/* band labels — the finishing zone lights up only once the day is done */}
       <div className="flex text-[9px] leading-tight">
         {segs.map((s) => (
           <div
             key={s.id}
-            className={`truncate text-center ${s.id === active.id ? 'font-semibold' : 'text-mist/50'}`}
-            style={{ width: `${pct(s.to) - pct(s.from)}%`, ...(s.id === active.id ? { color: s.color } : {}) }}
+            className={`truncate text-center ${complete && s.id === active.id ? 'font-semibold' : 'text-mist/50'}`}
+            style={{ width: `${pct(s.to) - pct(s.from)}%`, ...(complete && s.id === active.id ? { color: s.color } : {}) }}
           >
             {s.label}
           </div>
         ))}
       </div>
-      <div className="mt-1.5 text-xs text-mist">
-        burn today ≈ <b className="text-bone">{r.maintenance.toLocaleString()}</b> kcal
-        {r.exerciseKcal ? <> (incl. {r.exerciseKcal.toLocaleString()} exercise)</> : null}
-        {' · '}finishing here = <b style={{ color: r.zone.color }}>{r.zone.label}</b>
-        {r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week` : ''}
-        <span className="text-mist/60"> · estimates, not gospel</span>
-      </div>
+      {complete ? (
+        <div className="mt-1.5 text-xs text-mist">
+          burn ≈ <b className="text-bone">{r.maintenance.toLocaleString()}</b> kcal
+          {r.exerciseKcal ? <> (incl. ~{r.exerciseKcal.toLocaleString()} exercise{r.watchKcal > r.exerciseKcal ? ` — watch said ${r.watchKcal.toLocaleString()}` : ''})</> : null}
+          {' · '}finished <b className="text-bone">{Math.abs(r.delta).toLocaleString()} {r.delta <= 0 ? 'below' : 'above'}</b> burn
+          {' = '}<b style={{ color: r.zone.color }}>{r.zone.label}</b>
+          {r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week` : ''}
+          <span className="text-mist/60"> · estimates, not gospel</span>
+        </div>
+      ) : (
+        <div className="mt-1.5 text-xs text-mist">
+          today's target sits <b className="text-bone">{Math.abs(plannedDelta).toLocaleString()} kcal {plannedDelta <= 0 ? 'below' : 'above'}</b> today's burn ≈ <b className="text-bone">{r.maintenance.toLocaleString()}</b>
+          {plannedDelta < 0 ? <> · planned pace ≈ {kgPerWeek(plannedDelta)} kg/week</> : null}
+          <span className="block text-mist/60">
+            stop eating now → ~{Math.abs(r.delta).toLocaleString()} kcal {r.delta <= 0 ? 'below' : 'above'} burn · the day isn't finished — no verdicts yet
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -560,17 +575,34 @@ function BodyModal({ initial, onSave, onClose }: {
   )
 }
 
-function Mission({ goal, totals, foods, onRescue }: { goal: Macros; totals: Macros; foods: Food[]; onRescue: () => void }) {
+function Mission({ goal, totals, day, foods, onRescue }: { goal: Macros; totals: Macros; day: DayDoc; foods: Food[]; onRescue: () => void }) {
   const pLeft = Math.round(goal.protein - totals.protein)
   const kLeft = Math.round(goal.kcal - totals.kcal)
+  const fLeft = Math.round(goal.fat - totals.fat)
+  const boozeKcal = Math.round(day.entries.filter((e) => e.alcohol).reduce((s, e) => s + e.kcal, 0))
+  const shortSleep = day.sleep != null && day.sleep > 0 && day.sleep < 5
   const canRescue = pLeft > 10 && foods.some((f) => f.protein >= 10)
 
   let text: ReactNode
-  if (pLeft > 0 && kLeft >= 0) text = <>Eat <b className="text-bone">{pLeft}g more protein</b>. You have <b className="text-bone">{kLeft} kcal</b> remaining.</>
-  else if (pLeft > 0 && kLeft < 0) text = <>Still <b className="text-bone">{pLeft}g protein short</b>, {-kLeft} kcal over. Protein first — go lean.</>
-  else if (kLeft < 0) text = <>Protein hit. <b className="text-bone">{-kLeft} kcal over</b> — stop grinding.</>
+  if (pLeft > 0 && kLeft >= 0)
+    text = (
+      <>
+        Eat <b className="text-bone">{pLeft}g more protein</b>. You have <b className="text-bone">{kLeft} kcal</b> remaining.
+        {fLeft < 20 && pLeft > 25 && <> Only ~{Math.max(fLeft, 0)}g fat budget left — go lean: chicken breast, tuna, whey, fat-free yogurt.</>}
+      </>
+    )
+  else if (pLeft > 0 && kLeft < 0)
+    text = <>Still <b className="text-bone">{pLeft}g protein short</b>, {-kLeft} kcal over{boozeKcal > 300 ? <> — <span className="text-over">{boozeKcal} of it alcohol</span></> : null}. Protein first — go lean. Tomorrow is a normal day: no fasting, no punishment cardio.</>
+  else if (kLeft < 0) text = <>Protein hit. <b className="text-bone">{-kLeft} kcal over</b> — stop grinding.{boozeKcal > 300 ? <> ({boozeKcal} kcal was alcohol.)</> : null}</>
   else if (kLeft > 150) text = <>Protein hit. <b className="text-bone">{kLeft} kcal</b> remaining. Carbs and fat are flexible.</>
   else text = <>Goals hit. Go lift something heavy. 🏋️</>
+
+  if (shortSleep)
+    text = (
+      <>
+        {text} <span className="text-carbs">😴 {day.sleep}h sleep — recovery first today: normal meals, water, early night. No heroics.</span>
+      </>
+    )
 
   return (
     <div className="flex items-center justify-between gap-4 rounded-2xl border border-grind/30 bg-grind-soft/40 p-4">
