@@ -185,6 +185,39 @@ export interface ChallengeDoc {
   createdAt: number
 }
 
+/* --- recipes --- */
+
+/** macros are for the STATED qty — scaling an ingredient scales its macros */
+export interface RecipeIngredient {
+  id: string
+  name: string
+  qty: number
+  unit: string
+  kcal?: number | null
+  protein?: number | null
+  carbs?: number | null
+  fat?: number | null
+  optional?: boolean
+}
+
+export interface RecipeSection {
+  id: string
+  title: string
+  ingredients: RecipeIngredient[]
+  method: string
+}
+
+export interface Recipe {
+  id: string
+  name: string
+  emoji?: string | null
+  portions: number
+  sections: RecipeSection[]
+  notes?: string | null
+  createdAt: number
+  updatedAt: number
+}
+
 export interface McpConfig {
   key: string
   createdAt?: number

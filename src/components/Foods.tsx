@@ -1,14 +1,41 @@
 import { useMemo, useState } from 'react'
 import { UNITS, isPer100, basisLabel } from '../lib/units'
 import { CopyButton, Modal, Field, Panel, Plus, Trash, Pencil } from './ui'
+import Recipes from './Recipes'
+import { useRecipes } from '../hooks/useRecipes'
 import type { FoodsApi } from '../hooks/useData'
-import type { Food } from '../types'
+import type { Food, Settings } from '../types'
 
 type FoodDraft = Omit<Food, 'id'>
 
 const EMPTY: FoodDraft = { name: '', unit: 'g', alcohol: false, kcal: 0, protein: 0, carbs: 0, fat: 0, serving: null }
 
-export default function Foods({ foods, addFood, updateFood, deleteFood }: FoodsApi) {
+export default function Library({ uid, settings, ...foodsApi }: FoodsApi & { uid: string; settings: Settings }) {
+  const [view, setView] = useState<'foods' | 'recipes'>('foods')
+  const recipesApi = useRecipes(uid)
+  const VIEWS: [typeof view, string][] = [['foods', 'Foods'], ['recipes', 'Recipes']]
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 rounded-full border border-edge bg-panel p-1">
+        {VIEWS.map(([v, label]) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`flex-1 rounded-full py-1.5 text-sm font-medium transition ${
+              view === v ? 'bg-grind text-ink' : 'text-mist hover:text-bone'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'foods' ? <FoodsList {...foodsApi} /> : <Recipes uid={uid} settings={settings} api={recipesApi} />}
+    </div>
+  )
+}
+
+function FoodsList({ foods, addFood, updateFood, deleteFood }: FoodsApi) {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Food | 'new' | null>(null)
 

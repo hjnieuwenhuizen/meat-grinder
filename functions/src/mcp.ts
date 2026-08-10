@@ -530,6 +530,116 @@ const logBody = async (
   return { ok: true, date, body }
 }
 
+/* ---------- recipes ---------- */
+
+interface RecipeIngredient {
+  id: string; name: string; qty: number; unit: string
+  kcal?: number | null; protein?: number | null; carbs?: number | null; fat?: number | null
+  optional?: boolean
+}
+interface RecipeSection { id: string; title: string; ingredients: RecipeIngredient[]; method: string }
+
+const rnum = (v: unknown): number | null => {
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : null
+}
+
+// mirror of src/lib/recipes.ts sanitizeRecipe — keep in sync
+const sanitizeRecipe = (input: Record<string, unknown>) => {
+  const name = String(input.name ?? '').trim().slice(0, 120)
+  if (!name) throw new Error('Recipe needs a name')
+  const rawSections = Array.isArray(input.sections) ? input.sections : []
+  if (!rawSections.length) throw new Error('Recipe needs at least one section')
+  const sections: RecipeSection[] = rawSections.slice(0, 12).map((sec) => {
+    const so = sec as Record<string, unknown>
+    return {
+      id: crypto.randomUUID(),
+      title: String(so.title ?? '').trim().slice(0, 120) || 'Recipe',
+      method: String(so.method ?? '').trim().slice(0, 8000),
+      ingredients: (Array.isArray(so.ingredients) ? so.ingredients : [])
+        .slice(0, 60)
+        .map((ing) => {
+          const io = ing as Record<string, unknown>
+          return {
+            id: crypto.randomUUID(),
+            name: String(io.name ?? '').trim().slice(0, 120),
+            qty: Math.max(0, Number(io.qty) || 0),
+            unit: String(io.unit ?? '').trim().slice(0, 20) || 'unit',
+            kcal: rnum(io.kcal), protein: rnum(io.protein), carbs: rnum(io.carbs), fat: rnum(io.fat),
+            ...(io.optional ? { optional: true } : {}),
+          }
+        })
+        .filter((i) => i.name),
+    }
+  })
+  return {
+    name,
+    emoji: input.emoji ? String(input.emoji).slice(0, 8) : null,
+    portions: Math.min(64, Math.max(1, Math.round(Number(input.portions) || 1))),
+    sections,
+    notes: input.notes ? String(input.notes).slice(0, 2000) : null,
+  }
+}
+
+const recipeTotals = (sections: RecipeSection[]): Macros =>
+  sections.reduce(
+    (t, s) => {
+      for (const i of s.ingredients) {
+        t.kcal += i.kcal ?? 0; t.protein += i.protein ?? 0; t.carbs += i.carbs ?? 0; t.fat += i.fat ?? 0
+      }
+      return t
+    },
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+  )
+
+const recipesPayload = async (uid: string, q: string) => {
+  const snap = await db.collection(`users/${uid}/recipes`).orderBy('name').get()
+  return snap.docs
+    .map((d) => {
+      const r = d.data() as { name: string; emoji?: string | null; portions: number; sections: RecipeSection[] }
+      const totals = round(recipeTotals(r.sections ?? []))
+      return {
+        id: d.id,
+        name: r.name,
+        emoji: r.emoji ?? null,
+        portions: r.portions,
+        wholeDish: totals,
+        perPortion: round({
+          kcal: totals.kcal / Math.max(1, r.portions),
+          protein: totals.protein / Math.max(1, r.portions),
+          carbs: totals.carbs / Math.max(1, r.portions),
+          fat: totals.fat / Math.max(1, r.portions),
+        }),
+        ingredientsMissingMacros: (r.sections ?? []).reduce((n, sct) => n + sct.ingredients.filter((i) => i.kcal == null).length, 0),
+      }
+    })
+    .filter((r) => r.name.toLowerCase().includes(q.toLowerCase()))
+    .slice(0, 30)
+}
+
+const recipeGet = async (uid: string, id: string) => {
+  const snap = await db.doc(`users/${uid}/recipes/${id}`).get()
+  if (!snap.exists) throw new Error(`No recipe with id ${id} — use searchRecipes first`)
+  return { id: snap.id, ...snap.data() }
+}
+
+const recipeCreate = async (uid: string, input: Record<string, unknown>) => {
+  const data = sanitizeRecipe(input)
+  const ref = db.collection(`users/${uid}/recipes`).doc()
+  await ref.set({ ...data, createdAt: Date.now(), updatedAt: Date.now() })
+  return { ok: true, id: ref.id, recipe: data }
+}
+
+const recipeUpdate = async (uid: string, id: string, input: Record<string, unknown>) => {
+  const ref = db.doc(`users/${uid}/recipes/${id}`)
+  const snap = await ref.get()
+  if (!snap.exists) throw new Error(`No recipe with id ${id}`)
+  // full-shape update: the AI sends the complete corrected recipe
+  const data = sanitizeRecipe({ ...(snap.data() as Record<string, unknown>), ...input })
+  await ref.set({ ...data, createdAt: (snap.data() as { createdAt?: number }).createdAt ?? Date.now(), updatedAt: Date.now() })
+  return { ok: true, id, recipe: data }
+}
+
 const uidForKey = async (key: string | undefined | null): Promise<string | null> => {
   if (!key || !/^[a-f0-9]{48}$/.test(key)) return null
   const snap = await db.doc(`mcpKeys/${key}`).get()
@@ -672,6 +782,63 @@ function buildServer(uid: string): McpServer {
       },
     },
     async ({ date, entryId }) => text(await entryDelete(uid, date, entryId)),
+  )
+
+  const recipeShape = {
+    name: z.string().min(1).optional(),
+    emoji: z.string().max(8).optional(),
+    portions: z.number().int().min(1).max(64).optional(),
+    notes: z.string().max(2000).optional(),
+    sections: z.array(z.object({
+      title: z.string(),
+      method: z.string().default(''),
+      ingredients: z.array(z.object({
+        name: z.string().min(1),
+        qty: z.number().min(0).default(0),
+        unit: z.string().default('unit'),
+        kcal: z.number().min(0).optional(),
+        protein: z.number().min(0).optional(),
+        carbs: z.number().min(0).optional(),
+        fat: z.number().min(0).optional(),
+        optional: z.boolean().optional(),
+      })),
+    })).optional(),
+  }
+
+  server.registerTool(
+    'search_recipes',
+    {
+      description: "List/search the user's saved recipes with per-portion macros and ids (needed for get_recipe / update_recipe).",
+      inputSchema: { query: z.string().describe('Substring of the recipe name; empty lists all (max 30)') },
+    },
+    async ({ query }) => text(await recipesPayload(uid, query)),
+  )
+
+  server.registerTool(
+    'get_recipe',
+    {
+      description: 'Full recipe: sections with ingredients (qty, unit, macros for the stated qty), methods, portions, notes.',
+      inputSchema: { id: z.string().min(1) },
+    },
+    async ({ id }) => text(await recipeGet(uid, id)),
+  )
+
+  server.registerTool(
+    'add_recipe',
+    {
+      description: "Save a recipe. Sections keep each component's ingredients AND method together. Ingredient macros are for the STATED qty (not per 100g) and may be omitted when unknown.",
+      inputSchema: { ...recipeShape, name: z.string().min(1), sections: recipeShape.sections!.unwrap() },
+    },
+    async (input) => text(await recipeCreate(uid, input as Record<string, unknown>)),
+  )
+
+  server.registerTool(
+    'update_recipe',
+    {
+      description: 'Update a recipe (id from search_recipes). Send the fields to replace — sending sections replaces ALL sections, so send the complete corrected list (ideal for filling in missing macros).',
+      inputSchema: { id: z.string().min(1), ...recipeShape },
+    },
+    async ({ id, ...input }) => text(await recipeUpdate(uid, id, input as Record<string, unknown>)),
   )
 
   server.registerTool(
@@ -936,6 +1103,142 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/recipes': {
+      get: {
+        operationId: 'searchRecipes',
+        summary: "List/search the user's recipes with per-portion macros and ids",
+        parameters: [
+          { name: 'query', in: 'query', required: false, schema: { type: 'string' }, description: 'Substring of recipe name' },
+        ],
+        responses: {
+          '200': {
+            description: 'Recipes',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' }, name: { type: 'string' }, emoji: { type: ['string', 'null'] },
+                      portions: { type: 'number' }, wholeDish: MACROS_SCHEMA, perPortion: MACROS_SCHEMA,
+                      ingredientsMissingMacros: { type: 'number' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        operationId: 'addRecipe',
+        summary: 'Save a recipe: sections keep each component ingredients + method together; ingredient macros are for the stated qty and may be omitted when unknown',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: {
+                type: 'object',
+                required: ['name', 'sections'],
+                properties: {
+                  name: { type: 'string' },
+                  emoji: { type: 'string' },
+                  portions: { type: 'number', description: 'servings the whole recipe makes' },
+                  notes: { type: 'string' },
+                  sections: {
+                    type: 'array',
+                    description: 'one section per component (sauce / protein / wrap), method included',
+                    items: {
+                      type: 'object',
+                      required: ['title', 'ingredients'],
+                      properties: {
+                        title: { type: 'string' },
+                        method: { type: 'string', description: 'plain text, steps separated by newlines' },
+                        ingredients: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            required: ['name'],
+                            properties: {
+                              name: { type: 'string' },
+                              qty: { type: 'number' },
+                              unit: { type: 'string', description: 'g, ml, tbsp, tsp, cloves, tins, unit…' },
+                              kcal: { type: 'number', description: 'for the STATED qty, not per 100g' },
+                              protein: { type: 'number' },
+                              carbs: { type: 'number' },
+                              fat: { type: 'number' },
+                              optional: { type: 'boolean' },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              } } },
+        },
+        responses: {
+          '200': { description: 'Created recipe', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, id: { type: 'string' } } } } } },
+        },
+      },
+    },
+    '/recipes/{id}': {
+      get: {
+        operationId: 'getRecipe',
+        summary: 'Full recipe with sections, ingredient macros, methods, portions, notes',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Recipe', content: { 'application/json': { schema: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } } } } },
+      },
+      patch: {
+        operationId: 'updateRecipe',
+        summary: 'Update a recipe (sending sections replaces ALL sections — send the complete corrected list, ideal for filling in missing macros)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: {
+                type: 'object',
+                required: ['name', 'sections'],
+                properties: {
+                  name: { type: 'string' },
+                  emoji: { type: 'string' },
+                  portions: { type: 'number', description: 'servings the whole recipe makes' },
+                  notes: { type: 'string' },
+                  sections: {
+                    type: 'array',
+                    description: 'one section per component (sauce / protein / wrap), method included',
+                    items: {
+                      type: 'object',
+                      required: ['title', 'ingredients'],
+                      properties: {
+                        title: { type: 'string' },
+                        method: { type: 'string', description: 'plain text, steps separated by newlines' },
+                        ingredients: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            required: ['name'],
+                            properties: {
+                              name: { type: 'string' },
+                              qty: { type: 'number' },
+                              unit: { type: 'string', description: 'g, ml, tbsp, tsp, cloves, tins, unit…' },
+                              kcal: { type: 'number', description: 'for the STATED qty, not per 100g' },
+                              protein: { type: 'number' },
+                              carbs: { type: 'number' },
+                              fat: { type: 'number' },
+                              optional: { type: 'boolean' },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              } } },
+        },
+        responses: {
+          '200': { description: 'Updated recipe', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, id: { type: 'string' } } } } } },
+        },
+      },
+    },
     '/body': {
       post: {
         operationId: 'logBody',
@@ -1189,7 +1492,28 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
   const foodIdMatch = path.match(/^\/foods\/([A-Za-z0-9]+)$/)
 
   try {
-    if (req.method === 'POST' && path === '/body') {
+    const recipeIdMatch = path.match(/^\/recipes\/([A-Za-z0-9]+)$/)
+    if (req.method === 'GET' && path === '/recipes') {
+      res.json(await recipesPayload(uid, String(req.query.query ?? '')))
+    } else if (req.method === 'GET' && recipeIdMatch) {
+      try {
+        res.json(await recipeGet(uid, recipeIdMatch[1]))
+      } catch (e) {
+        res.status(404).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'POST' && path === '/recipes') {
+      try {
+        res.json(await recipeCreate(uid, body))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'PATCH' && recipeIdMatch) {
+      try {
+        res.json(await recipeUpdate(uid, recipeIdMatch[1], body))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'POST' && path === '/body') {
       const { date, ...input } = body as { date?: string; weightKg: number; bodyFatPct?: number; muscleKg?: number }
       try {
         res.json(await logBody(uid, date && DATE_RX.test(date) ? date : localDateKey(), input))
