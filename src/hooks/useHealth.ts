@@ -103,7 +103,8 @@ export function useHealth(uid: string) {
 /** fire-and-forget auto sync — call once on app start */
 export function autoSyncHealth(uid: string) {
   if (!isNativeApp() || localStorage.getItem(ENABLED_FLAG) !== '1') return
-  void syncHealthSteps(uid).catch((e) =>
+  // a week's backfill so skipped days can't lose steps
+  void syncHealthSteps(uid, 7).catch((e) =>
     pushHealthLog(uid, { at: Date.now(), error: e instanceof Error ? e.message : String(e) }),
   )
 }
