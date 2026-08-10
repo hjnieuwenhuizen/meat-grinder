@@ -52,7 +52,7 @@ interface DayDoc {
   entries: Entry[]
   workouts: Workout[]
   sleep?: number | null
-  /** manually typed steps — wins over automatic sources */
+  /** legacy manually typed steps — fallback only */
   steps?: number | null
   garmin?: { steps?: number | null; restingHr?: number | null }
   /** phone Health Connect steps */
@@ -175,7 +175,7 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
     totals,
     sleepHours: day.sleep ?? null,
     body: day.body ?? null,
-    steps: day.steps ?? day.garmin?.steps ?? day.health?.steps ?? null,
+    steps: day.garmin?.steps ?? day.health?.steps ?? day.steps ?? null,
     restingHeartRate: day.garmin?.restingHr ?? null,
     alcohol: alcohol.length
       ? {

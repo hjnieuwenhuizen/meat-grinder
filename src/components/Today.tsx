@@ -29,7 +29,7 @@ type Drag = { id: string; kind: 'entry' | 'workout' } | null
 
 export default function Today({ uid, settings, foods, addFood, updateFood, publish, saveSettings }: TodayProps) {
   const [key, setKey] = useState(todayKey())
-  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout, setBody } = useDay(uid, key, settings)
+  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, addWorkout, updateWorkout, removeWorkout, setBody } = useDay(uid, key, settings)
   const [adding, setAdding] = useState(false)
   const [rescuing, setRescuing] = useState(false)
   const [editing, setEditing] = useState<Entry | null>(null)
@@ -135,21 +135,13 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
           />
           <span className="text-xs text-mist">h sleep</span>
         </label>
-        <label className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm" title={day.garmin?.steps ? 'Steps (Garmin — type to override)' : 'Steps (manual)'}>
-          <span>👟</span>
-          <input
-            key={key}
-            type="number" inputMode="numeric" step="100" min="0" max="200000"
-            defaultValue={stepsOf(day) || ''}
-            onBlur={(e) => {
-              const v = Math.round(Number(e.target.value)) || null
-              if (v !== (stepsOf(day) || null)) setSteps(v)
-            }}
-            placeholder="–"
-            className="w-16 bg-transparent text-center font-medium text-bone outline-none"
-          />
-          <span className="text-xs text-mist">steps</span>
-        </label>
+        <span
+          className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist"
+          title={day.garmin?.steps ? 'Steps from your Garmin watch' : day.health?.steps ? 'Steps from phone Health Connect' : 'Steps sync from Garmin / Health Connect'}
+        >
+          👟 <b className="font-medium text-bone">{stepsOf(day) ? stepsOf(day).toLocaleString() : '–'}</b>
+          <span className="text-xs">steps{day.garmin?.steps ? ' ⌚' : day.health?.steps ? ' 📱' : ''}</span>
+        </span>
         {day.garmin?.restingHr ? (
           <span className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist" title="Resting heart rate (Garmin)">
             ❤️ <b className="font-medium text-bone">{day.garmin.restingHr}</b> bpm rest

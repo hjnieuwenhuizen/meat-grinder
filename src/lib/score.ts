@@ -9,8 +9,10 @@ export const STEP_GOAL = 7000
 /** manual steps win over Garmin */
 // typed value wins; then Garmin (the watch is the authority when connected);
 // phone Health Connect only fills days Garmin didn't cover
+// Garmin (watch) beats phone Health Connect; the typed field is a legacy
+// fallback only — steps are no longer manually editable
 export const stepsOf = (day: Pick<DayDoc, 'steps' | 'garmin' | 'health'> | null | undefined): number =>
-  day?.steps ?? day?.garmin?.steps ?? day?.health?.steps ?? 0
+  day?.garmin?.steps ?? day?.health?.steps ?? day?.steps ?? 0
 
 export const SCORE_ITEMS: { key: keyof ScoreBreakdown; emoji: string; label: string; max: number }[] = [
   { key: 'logged', emoji: '📓', label: 'Logged food', max: 1 },

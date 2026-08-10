@@ -56,7 +56,7 @@ Real users (and their history) exist in production. Any schema change follows th
 1. **Additive and optional only.** New fields are `?:` optional; never rename or repurpose an existing field. Readers default missing data (`{ ...EMPTY_DAY, ...snap.data() }` pattern — keep it on every read path, client and functions).
 2. **Old shapes stay readable forever.** Keep the legacy fallbacks working: entries with `grams` instead of `amount`+`unit`; days without `workouts`/`sleep`/`steps`/`goals`; days without `goals` resolve against live Settings (`goalFor`). Never drop a fallback because "everyone should be migrated by now".
 3. **Write-forward, not bulk rewrite.** Upgrade documents when they're next written (e.g. `goals` snapshots are stamped on first write of a day, by the app AND every server write path). No scripts that mass-rewrite user documents.
-4. **New data sources get their own lane + explicit precedence** — never overwrite an existing field with a new source (steps: typed `day.steps` > `garmin.steps` > `health.steps` is the model).
+4. **New data sources get their own lane + explicit precedence** — never overwrite an existing field with a new source (steps: `garmin.steps` > `health.steps` > legacy `day.steps` is the model).
 5. **If a true backfill is unavoidable**, run it idempotently inside the scheduled function (like the legacy Garmin token migration), guard it so it runs once, and log what it touched.
 6. **Functions duplicate the read fallbacks** (`functions/src/mcp.ts`, `index.ts`) — when you change a shape, update both sides in the same commit, and keep the MCP/OpenAPI payloads backward compatible (add fields, don't remove).
 
