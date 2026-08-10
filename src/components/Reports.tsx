@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { fmtAmount } from '../lib/units'
 import { stepsOf } from '../lib/score'
+import { energyReadout, KCAL_PER_KG } from '../lib/coach'
+import type { Profile } from '../types'
 import { workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { fetchDays, totalsOf, goalFor } from '../hooks/useData'
 import { todayKey, addDays, startOfWeek, weekKeys, monthKeys, fromKey, fmtDay, fmtMonth } from '../lib/dates'
@@ -262,6 +264,11 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
           </Panel>
           </div>
 
+          {/* energy balance — the honest ledger */}
+          {settings.profile && (
+            <EnergyBalance profile={settings.profile} keys={keys} days={days} />
+          )}
+
           {/* per-day table */}
           <Panel className="divide-y divide-edge">
             {keys.filter((k) => k <= todayKey()).map((k) => {
@@ -330,6 +337,70 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
         </>
       )}
     </div>
+  )
+}
+
+// Per-day energy balance: eaten − (rest burn + that day's logged exercise).
+// Only days with logged food count — an empty diary is missing data, not a
+// deficit. Everything is an estimate and says so.
+function EnergyBalance({ profile, keys, days }: {
+  profile: Profile
+  keys: string[]
+  days: Record<string, DayDoc>
+}) {
+  const rows = keys
+    .filter((k) => k <= todayKey())
+    .map((k) => {
+      const day = days[k]
+      const logged = Boolean(day?.entries?.length)
+      const r = day ? energyReadout(profile, day, totalsOf(day).kcal) : null
+      return { k, logged, r }
+    })
+
+  const counted = rows.filter((x) => x.logged && x.r)
+  if (!counted.length) return null
+
+  const totalDelta = counted.reduce((s, x) => s + (x.r?.delta ?? 0), 0)
+  const estKg = Math.round((totalDelta / KCAL_PER_KG) * 100) / 100
+  const maxAbs = Math.max(400, ...counted.map((x) => Math.abs(x.r?.delta ?? 0)))
+
+  return (
+    <Panel className="p-4">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-medium uppercase tracking-wider text-mist">Energy balance</span>
+        <span className="text-[10px] text-mist">eaten vs burn (incl. exercise) · logged days only · estimates</span>
+      </div>
+      <div className="flex items-center gap-1" style={{ height: 110 }}>
+        {rows.map(({ k, logged, r }) => {
+          if (!logged || !r) {
+            return (
+              <div key={k} className="flex flex-1 flex-col justify-center self-stretch" title={`${fmtDay(k)}: not logged`}>
+                <div className="h-px bg-edge" />
+              </div>
+            )
+          }
+          const h = Math.min(50, (Math.abs(r.delta) / maxAbs) * 50)
+          const up = r.delta > 0
+          return (
+            <div key={k} className="group relative flex flex-1 flex-col self-stretch" title={`${fmtDay(k)}: ${r.delta > 0 ? '+' : ''}${r.delta} kcal (${r.zone.label})`}>
+              <div className="flex flex-1 flex-col justify-end">
+                {up && <div className="rounded-t-sm" style={{ height: `${h}%`, background: r.zone.color }} />}
+              </div>
+              <div className="h-px bg-mist/40" />
+              <div className="flex flex-1 flex-col justify-start">
+                {!up && <div className="rounded-b-sm" style={{ height: `${h}%`, background: r.zone.color }} />}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-2 text-xs text-mist">
+        Over <b className="text-bone">{counted.length}</b> logged day{counted.length > 1 ? 's' : ''}:{' '}
+        <b className="text-bone">{totalDelta > 0 ? '+' : ''}{totalDelta.toLocaleString()}</b> kcal
+        {' '}→ implied weight change ≈ <b style={{ color: estKg <= 0 ? 'var(--color-grind)' : 'var(--color-fat)' }}>{estKg > 0 ? '+' : ''}{estKg} kg</b>
+        {rows.some((x) => !x.logged) && <span className="text-mist/60"> · unlogged days excluded, not assumed</span>}
+      </div>
+    </Panel>
   )
 }
 

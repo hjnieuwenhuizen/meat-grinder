@@ -137,6 +137,15 @@ export interface EnergyReadout {
   kgWeek: number
 }
 
+/** the four hero-bar bands, anchored to today's maintenance M:
+ *  extreme loss < M−1000 ≤ weight loss < M−250 ≤ maintenance ≤ M+150 < gaining */
+export const heroBands = (maintenance: number) => [
+  { id: 'extreme', label: 'extreme', to: maintenance - 1000, color: 'var(--color-over)' },
+  { id: 'loss', label: 'weight loss', to: maintenance - 250, color: 'var(--color-grind)' },
+  { id: 'maintain', label: 'maintain', to: maintenance + 150, color: 'var(--color-carbs)' },
+  { id: 'gain', label: 'gain', to: Number.POSITIVE_INFINITY, color: 'var(--color-fat)' },
+] as const
+
 export const energyReadout = (
   p: Profile,
   day: Pick<DayDoc, 'workouts'> | null | undefined,

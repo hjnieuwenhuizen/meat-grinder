@@ -8,7 +8,7 @@ import { MEALS, defaultMealNow } from '../lib/meals'
 import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
-import { energyReadout, ZONES } from '../lib/coach'
+import { energyReadout, heroBands } from '../lib/coach'
 import type { DayDoc, Profile } from '../types'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
@@ -165,12 +165,16 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
             {kcalStatus === 'good' && <span className="ml-1.5 text-xs opacity-80">in range</span>}
           </div>
         </div>
-        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-edge">
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            style={{ width: `${kcalPct * 100}%`, background: kcalColor }}
-          />
-        </div>
+        {settings.profile ? (
+          <ZonedKcalBar profile={settings.profile} day={day} eaten={totals.kcal} goalKcal={goal.kcal} fillColor={kcalColor} />
+        ) : (
+          <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-edge">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${kcalPct * 100}%`, background: kcalColor }}
+            />
+          </div>
+        )}
         {(() => {
           const booze = day.entries.filter((e) => e.alcohol)
           if (!booze.length) return null
@@ -186,9 +190,6 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
 
       {/* today's mission */}
       <Mission goal={goal} totals={totals} foods={foods} onRescue={() => setRescuing(true)} />
-
-      {/* energy zones — where today's eating lands vs today's actual burn */}
-      {settings.profile && <EnergyPanel profile={settings.profile} day={day} eaten={totals.kcal} />}
 
       {/* macro rings — protein is a hard target; carbs/fat are flexible energy
           levers judged by the calorie budget, never by their own line */}
@@ -395,52 +396,65 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
   )
 }
 
-// Where the day is heading: eaten vs (rest burn + logged exercise), banded
-// into cut/maintain/gain zones. Pure insight — the goal budget never eats
-// back exercise calories.
-function EnergyPanel({ profile, day, eaten }: { profile: Profile; day: DayDoc; eaten: number }) {
+// The main calorie bar, zoned against today's ACTUAL burn (rest metabolism +
+// logged exercise). Bands move right when you train. Everything here is an
+// estimate and labelled as such — and the goal budget never eats back burn.
+function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
+  profile: Profile
+  day: DayDoc
+  eaten: number
+  goalKcal: number
+  fillColor: string
+}) {
   const r = energyReadout(profile, day, eaten)
-  // bar spans maintenance −1300 … +450; marker = eaten position
-  const span = { min: r.maintenance - 1300, max: r.maintenance + 450 }
-  const pct = Math.min(100, Math.max(0, ((r.eaten - span.min) / (span.max - span.min)) * 100))
-  const edges = [-1000, -600, -300, -100, 150] // zone boundaries as deltas
-  const widths = [
-    ((edges[0] + 1300) / 1750) * 100,
-    ((edges[1] - edges[0]) / 1750) * 100,
-    ((edges[2] - edges[1]) / 1750) * 100,
-    ((edges[3] - edges[2]) / 1750) * 100,
-    ((edges[4] - edges[3]) / 1750) * 100,
-    ((450 - edges[4]) / 1750) * 100,
-  ]
+  const bands = heroBands(r.maintenance)
+  const scaleMax = Math.max(goalKcal, r.maintenance + 400)
+  const pct = (v: number) => Math.min(100, Math.max(0, (v / scaleMax) * 100))
+
+  // band segments as [from, to] clamped to the scale
+  const cuts = [0, Math.max(0, r.maintenance - 1000), Math.max(0, r.maintenance - 250), r.maintenance + 150, scaleMax]
+  const segs = bands.map((b, i) => ({ ...b, from: cuts[i], to: Math.min(cuts[i + 1], scaleMax) }))
 
   return (
-    <Panel className="p-4">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-medium uppercase tracking-wider text-mist">Energy</span>
-        <span className="text-[10px] tabular-nums text-mist" title="Rest burn + logged exercise — informational, never added to your budget">
-          burn today ≈ {r.maintenance.toLocaleString()} kcal{r.exerciseKcal ? ` (incl. ${r.exerciseKcal} exercise)` : ''}
-        </span>
-      </div>
-      <div className="relative mt-2 h-2.5 overflow-hidden rounded-full">
-        <div className="flex h-full">
-          {ZONES.map((z, i) => (
-            <div key={z.id} style={{ width: `${widths[i]}%`, background: z.color, opacity: r.zone.id === z.id ? 1 : 0.22 }} />
+    <div className="mt-4">
+      <div className="relative h-3 overflow-hidden rounded-full bg-edge">
+        {/* zone tint */}
+        <div className="absolute inset-0 flex">
+          {segs.map((s) => (
+            <div key={s.id} style={{ width: `${pct(s.to) - pct(s.from)}%`, background: s.color, opacity: 0.22 }} />
           ))}
         </div>
-        <div className="absolute top-1/2 -translate-y-1/2" style={{ left: `calc(${pct}% - 5px)` }}>
-          <div className="size-2.5 rounded-full border-2 border-ink bg-bone shadow" />
-        </div>
+        {/* eaten fill */}
+        <div
+          className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+          style={{ width: `${pct(eaten)}%`, background: fillColor, opacity: 0.9 }}
+        />
+        {/* goal tick */}
+        <div
+          className="absolute inset-y-0 w-0.5 bg-bone"
+          style={{ left: `${pct(goalKcal)}%` }}
+          title={`Your goal: ${Math.round(goalKcal)} kcal`}
+        />
       </div>
-      <div className="mt-2 text-sm">
-        <b style={{ color: r.zone.color }}>{r.zone.label}</b>
-        <span className="text-mist">
-          {' '}— {r.delta > 0 ? '+' : ''}{r.delta.toLocaleString()} kcal vs burn
-          {r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week at this pace` : ''}
-        </span>
+      {/* band labels aligned to their segments */}
+      <div className="mt-1 flex text-[9px] leading-tight text-mist/70">
+        {segs.map((s) => (
+          <div key={s.id} className="truncate text-center" style={{ width: `${pct(s.to) - pct(s.from)}%` }}>
+            {s.label}
+          </div>
+        ))}
       </div>
-    </Panel>
+      <div className="mt-1.5 text-xs text-mist">
+        burn today ≈ <b className="text-bone">{r.maintenance.toLocaleString()}</b> kcal
+        {r.exerciseKcal ? <> (incl. {r.exerciseKcal.toLocaleString()} exercise)</> : null}
+        {' · '}finishing here = <b style={{ color: r.zone.color }}>{r.zone.label}</b>
+        {r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week` : ''}
+        <span className="text-mist/60"> · estimates, not gospel</span>
+      </div>
+    </div>
   )
 }
+
 
 function Mission({ goal, totals, foods, onRescue }: { goal: Macros; totals: Macros; foods: Food[]; onRescue: () => void }) {
   const pLeft = Math.round(goal.protein - totals.protein)

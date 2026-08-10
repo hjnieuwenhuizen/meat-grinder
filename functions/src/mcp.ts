@@ -216,7 +216,18 @@ const rangePayload = async (uid: string, start: string, end: string) => {
         fat: logged.reduce((s, d) => s + d.totals.fat, 0) / logged.length,
       })
     : null
-  return { days, daysLogged: logged.length, averagesOverLoggedDays: avg }
+  // energy ledger over logged days only — an empty diary is missing data, not a deficit
+  const withEnergy = logged.filter((d) => d.energy)
+  const totalDelta = withEnergy.reduce((s2, d) => s2 + (d.energy?.deltaVsBurn ?? 0), 0)
+  const energyBalance = withEnergy.length
+    ? {
+        loggedDaysCounted: withEnergy.length,
+        totalDeltaKcal: totalDelta,
+        impliedWeightChangeKg: Math.round((totalDelta / 7700) * 100) / 100,
+        note: 'Estimates. Eaten vs (rest burn + logged exercise) per day; unlogged days excluded, never assumed.',
+      }
+    : null
+  return { days, daysLogged: logged.length, averagesOverLoggedDays: avg, energyBalance }
 }
 
 const foodsPayload = async (uid: string, query: string) => {

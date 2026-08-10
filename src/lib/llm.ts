@@ -143,10 +143,20 @@ export function rangeReport(
     compliance = `Compliance: ${Math.round((hits.reduce((a, b) => a + b, 0) / (logged.length * 2)) * 100)}% (protein ≥95% of goal, kcal within ±10%)`
   }
 
+  let energy = ''
+  if (settings.profile) {
+    const counted = logged.map((k) => energyReadout(settings.profile!, daysByKey[k], totalsOf(daysByKey[k]).kcal))
+    if (counted.length) {
+      const total = counted.reduce((s2, r2) => s2 + r2.delta, 0)
+      const kg = Math.round((total / 7700) * 100) / 100
+      energy = `Energy balance over ${counted.length} logged days: ${total > 0 ? '+' : ''}${total} kcal vs burn (incl. exercise) → implied weight change ≈ ${kg > 0 ? '+' : ''}${kg} kg (estimates; unlogged days excluded)`
+    }
+  }
+
   return [
     `# Meat Grinder — ${title}`,
     `Goals: rest ${line(settings.rest)}${settings.trainingEnabled ? ` | training ${line(settings.training)}` : ''}`,
-    ...[avg, compliance].filter(Boolean),
+    ...[avg, compliance, energy].filter(Boolean),
     '',
     '## Days',
     ...rows,
