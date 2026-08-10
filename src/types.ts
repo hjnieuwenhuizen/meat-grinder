@@ -38,6 +38,8 @@ export interface Settings {
   rest: Macros
   training: Macros
   profile?: Profile
+  // user opted out of the wizard plan — goals are hand-typed (profile kept for energy zones/fueling)
+  manualGoals?: boolean
 }
 
 /** frozen copy of the goals as they were when the day was logged —

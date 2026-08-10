@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import GoalWizard from './GoalWizard'
+import { ACTIVITIES, DIETS, GOAL_RATES, planCheck } from '../lib/coach'
 import { useGarmin } from '../hooks/useGarmin'
 import { useHealth } from '../hooks/useHealth'
 import { useMcp } from '../hooks/useMcp'
-import { CopyButton, Field, Panel } from './ui'
-import type { Macros, Settings } from '../types'
+import { CopyButton, Field, Panel, Pencil } from './ui'
+import type { Macros, Profile, Settings } from '../types'
 
 type MacroKey = keyof Macros
 // while editing, goal fields hold raw input strings
@@ -23,23 +24,35 @@ export default function Goals({ uid, settings, save }: {
   save: (s: Settings) => void
 }) {
   const [wizard, setWizard] = useState(false)
+  const onPlan = Boolean(settings.profile) && !settings.manualGoals
 
   return (
     <div className="max-w-lg space-y-4 lg:grid lg:max-w-none lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0">
       <div className="space-y-4">
-        <button
-          type="button"
-          onClick={() => setWizard(true)}
-          className="w-full rounded-2xl border border-grind/40 bg-grind-soft/30 p-4 text-left transition hover:bg-grind-soft/50"
-        >
-          <div className="font-medium">🧠 Smart goal setup</div>
-          <div className="mt-0.5 text-xs text-mist">
-            {settings.profile
-              ? 'Retune your macros — weight changed, new diet, new pace. Past days keep their old goals.'
-              : 'Answer a few questions and get science-backed macros for your diet style.'}
-          </div>
-        </button>
-        <GoalsForm settings={settings} save={save} />
+        {!onPlan && (
+          <button
+            type="button"
+            onClick={() => setWizard(true)}
+            className="w-full rounded-2xl border border-grind/40 bg-grind-soft/30 p-4 text-left transition hover:bg-grind-soft/50"
+          >
+            <div className="font-medium">🧠 Smart goal setup</div>
+            <div className="mt-0.5 text-xs text-mist">
+              {settings.profile
+                ? "You're on manual goals. Run the wizard to switch back to a plan — past days keep their old goals."
+                : 'Answer a few questions and get science-backed macros for your diet style.'}
+            </div>
+          </button>
+        )}
+        {onPlan ? (
+          <PlanCard
+            settings={settings}
+            profile={settings.profile!}
+            onRetune={() => setWizard(true)}
+            onManual={() => save({ ...settings, manualGoals: true })}
+          />
+        ) : (
+          <GoalsForm settings={settings} save={save} />
+        )}
       </div>
       <div className="space-y-4">
         <GarminPanel uid={uid} />
@@ -49,10 +62,109 @@ export default function Goals({ uid, settings, save }: {
       {wizard && (
         <GoalWizard
           initial={settings.profile}
-          onSave={(next) => save(next)}
+          onSave={(next) => save({ ...next, manualGoals: false })}
           onClose={() => setWizard(false)}
         />
       )}
+    </div>
+  )
+}
+
+/* ---------- the wizard plan, shown instead of raw number boxes ---------- */
+
+function PlanCard({ settings, profile, onRetune, onManual }: {
+  settings: Settings
+  profile: Profile
+  onRetune: () => void
+  onManual: () => void
+}) {
+  const c = planCheck(profile)
+  const diet = DIETS.find((d) => d.id === profile.diet)
+  const activity = ACTIVITIES.find((a) => a.id === profile.activity)
+  const preset = GOAL_RATES.find((g) => g.rate === profile.goalRate)
+  const age = new Date().getFullYear() - profile.birthYear
+  const line = (g: Macros) => (
+    <span className="tabular-nums"><b>{g.kcal}</b> kcal · P {g.protein} · C {g.carbs} · F {g.fat}</span>
+  )
+
+  const copyText = () =>
+    [
+      '# Meat Grinder — Goals (smart plan)',
+      `Profile: ${profile.sex}, ${age}y, ${profile.heightCm}cm, ${profile.weightKg}kg · ${activity?.label ?? profile.activity} · ${profile.trainingDays ?? 0} training days/wk`,
+      `Diet: ${diet?.label ?? profile.diet} · protein ${profile.proteinPerKg ?? diet?.proteinPerKg}g/kg`,
+      `Pace: ${preset?.label ?? 'Custom target'} → honest ${c.actualRate} kg/week (${c.ratePctBw}% BW) · rest-day maintenance ~${c.tdee} kcal`,
+      `Rest day: ${settings.rest.kcal} kcal | P ${settings.rest.protein}g | C ${settings.rest.carbs}g | F ${settings.rest.fat}g`,
+      ...(settings.trainingEnabled
+        ? [`Training day: ${settings.training.kcal} kcal | P ${settings.training.protein}g | C ${settings.training.carbs}g | F ${settings.training.fat}g`]
+        : []),
+    ].join('\n')
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Your plan</h2>
+        <CopyButton text={copyText} />
+      </div>
+
+      <Panel className="overflow-hidden">
+        <button
+          type="button"
+          onClick={onRetune}
+          className="block w-full border-b border-edge bg-grind-soft/30 p-4 text-left transition hover:bg-grind-soft/50"
+        >
+          <div className="flex items-center justify-between">
+            <div className="font-medium">🧠 {diet?.icon} {diet?.label} · {preset?.label ?? 'Custom target'}</div>
+            <Pencil className="size-4 shrink-0 text-mist" />
+          </div>
+          <div className="mt-0.5 text-xs text-mist">
+            {profile.sex === 'male' ? 'Male' : 'Female'}, {age} · {profile.heightCm} cm · {profile.weightKg} kg
+            · {activity?.label.toLowerCase()} · {profile.trainingDays ?? 0} training days/wk — tap to retune
+          </div>
+        </button>
+
+        <div className="space-y-3 p-4">
+          <div className="grid grid-cols-2 gap-3 text-center text-sm">
+            <div className="rounded-xl border border-edge bg-ink p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-mist">Maintenance (rest)</div>
+              <div className="mt-0.5 text-lg font-semibold tabular-nums">{c.tdee}</div>
+              <div className="text-[11px] text-mist">kcal/day</div>
+            </div>
+            <div className="rounded-xl border border-edge bg-ink p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-mist">Honest pace</div>
+              <div className={`mt-0.5 text-lg font-semibold tabular-nums ${c.actualRate < 0 ? 'text-grind' : ''}`}>
+                {c.actualRate > 0 ? '+' : ''}{c.actualRate}
+              </div>
+              <div className="text-[11px] text-mist">kg/week · {c.ratePctBw}% BW{c.capped ? ' · capped' : ''}</div>
+            </div>
+          </div>
+
+          <div className="space-y-1 text-sm">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-xs font-medium uppercase tracking-wider text-grind">Rest day</span>
+              {line(settings.rest)}
+            </div>
+            {settings.trainingEnabled && (
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-xs font-medium uppercase tracking-wider text-grind">Training day</span>
+                {line(settings.training)}
+              </div>
+            )}
+          </div>
+
+          <p className="text-[11px] leading-snug text-mist">
+            Protein {profile.proteinPerKg ?? diet?.proteinPerKg} g/kg · estimates, not gospel — your weight trend
+            in Reports is the real judge. Retune any time; past days keep the goals they were logged under.
+          </p>
+        </div>
+      </Panel>
+
+      <button
+        type="button"
+        onClick={onManual}
+        className="w-full rounded-full border border-edge py-2.5 text-sm font-medium text-mist transition hover:text-bone"
+      >
+        Set goals manually instead
+      </button>
     </div>
   )
 }
@@ -213,10 +325,12 @@ function GoalsForm({ settings, save }: { settings: Settings; save: (s: Settings)
   const submit = () => {
     const clean = (g: GoalDraft): Macros =>
       Object.fromEntries(FIELDS.map(([k]) => [k, Number(g[k]) || 0])) as unknown as Macros
+    // keep the profile — energy zones and endurance fueling still need it
     save({
       trainingEnabled: form.trainingEnabled,
       rest: clean(form.rest),
       training: clean(form.training),
+      ...(settings.profile ? { profile: settings.profile, manualGoals: true } : {}),
     })
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
