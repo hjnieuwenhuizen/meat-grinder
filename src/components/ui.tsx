@@ -21,10 +21,21 @@ export function CopyButton({ text, label = 'Copy for LLM' }: { text: string | ((
   )
 }
 
-export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+const MODAL_SIZES = {
+  md: 'max-w-md',
+  lg: 'max-w-md sm:max-w-2xl',
+  xl: 'max-w-md sm:max-w-4xl',
+} as const
+
+export function Modal({ title, onClose, children, size = 'md' }: {
+  title: string
+  onClose: () => void
+  children: ReactNode
+  size?: keyof typeof MODAL_SIZES
+}) {
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm sm:items-center">
-      <div className="max-h-[80dvh] w-full max-w-md overflow-y-auto rounded-b-2xl border border-edge bg-panel p-5 pt-[calc(1.25rem+env(safe-area-inset-top))] shadow-2xl sm:max-h-[88dvh] sm:rounded-2xl sm:pt-5">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm sm:items-center sm:p-6">
+      <div className={`max-h-[80dvh] w-full ${MODAL_SIZES[size]} overflow-y-auto rounded-b-2xl border border-edge bg-panel p-5 pt-[calc(1.25rem+env(safe-area-inset-top))] shadow-2xl sm:max-h-[88dvh] sm:rounded-2xl sm:p-6`}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button onClick={onClose} className="rounded-full p-1 text-mist hover:text-bone">

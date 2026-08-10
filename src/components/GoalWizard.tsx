@@ -22,8 +22,12 @@ export default function GoalWizard({ initial, onSave, onClose }: {
   const [diet, setDiet] = useState<DietId>(initial?.diet ?? 'balanced')
   const [proteinPerKg, setProteinPerKg] = useState(initial?.proteinPerKg ?? 2.0)
   const [goalRate, setGoalRate] = useState(initial?.goalRate ?? -0.5)
+  const [customKcal, setCustomKcal] = useState('')
+  const [useCustom, setUseCustom] = useState(false)
 
-  const profile: Profile | null =
+  // Custom target: user types exact rest-day kcal; we derive the equivalent
+  // rate so all downstream math stays consistent
+  const baseProfile: Profile | null =
     birthYear && heightCm && weightKg
       ? {
           sex,
@@ -37,6 +41,13 @@ export default function GoalWizard({ initial, onSave, onClose }: {
           trainingDays,
         }
       : null
+  const customRate =
+    baseProfile && useCustom && Number(customKcal) >= 1000
+      ? Math.round(((Number(customKcal) - restTdee(baseProfile)) * 7 / KCAL_PER_KG) * 100) / 100
+      : null
+  const profile: Profile | null = baseProfile
+    ? { ...baseProfile, goalRate: customRate ?? goalRate }
+    : null
 
   const youValid =
     Number(birthYear) > 1920 && Number(birthYear) < 2015 &&
@@ -52,7 +63,7 @@ export default function GoalWizard({ initial, onSave, onClose }: {
     }`
 
   return (
-    <Modal title="Smart goal setup" onClose={onClose}>
+    <Modal title="Smart goal setup" onClose={onClose} size="lg">
       {/* step dots */}
       <div className="mb-4 flex items-center gap-2">
         {STEPS.map((s, i) => (
@@ -181,13 +192,41 @@ export default function GoalWizard({ initial, onSave, onClose }: {
               )
             })}
           </div>
+          <div className={`rounded-xl border p-3 ${useCustom ? 'border-grind/60 bg-grind-soft' : 'border-edge bg-ink'}`}>
+            <label className="flex items-center justify-between gap-2 text-sm">
+              <span>
+                <span className="block font-medium">Custom target</span>
+                <span className="block text-xs text-mist">Coach gave you a number? Type exact rest-day calories.</span>
+              </span>
+              <span className="flex items-center gap-2">
+                <input
+                  type="number" inputMode="numeric" placeholder="1900"
+                  value={customKcal}
+                  onFocus={() => setUseCustom(true)}
+                  onChange={(e) => { setCustomKcal(e.target.value); setUseCustom(true) }}
+                  className="w-24 rounded-lg border border-edge bg-panel px-2 py-1.5 text-center text-bone outline-none focus:border-grind/60"
+                />
+                <span className="text-xs text-mist">kcal</span>
+              </span>
+            </label>
+            {customRate !== null && (
+              <p className="mt-1 text-[11px] text-mist">≈ {customRate > 0 ? '+' : ''}{customRate} kg/week vs your rest-day maintenance</p>
+            )}
+            {useCustom && (
+              <button type="button" onClick={() => { setUseCustom(false); setCustomKcal('') }} className="mt-1 text-[11px] text-mist underline-offset-2 hover:text-bone hover:underline">
+                back to preset paces
+              </button>
+            )}
+          </div>
+
           {profile && youValid && (() => {
             const c = planCheck(profile)
-            if (!c.tooFast && !c.clampedAtBmr) return null
+            if (!c.tooFast && !c.capped && !c.belowBmr) return null
             return (
               <p className="rounded-lg border border-over/40 bg-over/10 p-2 text-[11px] text-over">
                 {c.tooFast && <>That's {c.ratePctBw}% of bodyweight/week — beyond the muscle-safe band of 0.4–0.7%. Fine for a short block; not a lifestyle. </>}
-                {c.clampedAtBmr && <>This pace would put you below your BMR ({Math.round(bmr(profile))} kcal), so the plan is floored there — the real rate will be slower than requested. Pick a gentler pace for honest numbers.</>}
+                {c.capped && <>The deficit is capped at 25% of your maintenance, so the plan lands at {c.targetKcal} kcal — the honest pace is <b>{c.actualRate} kg/week</b>, not the pace you picked. </>}
+                {c.belowBmr && !c.capped && <>Heads-up: this sits below your estimated BMR ({Math.round(bmr(profile))} kcal). Not a hard stop — BMR is an estimate, not a safety threshold — but let your weight trend and recovery be the judge.</>}
               </p>
             )
           })()}
@@ -204,7 +243,10 @@ export default function GoalWizard({ initial, onSave, onClose }: {
                 </div>
               )}
               <div className="mt-1 text-xs text-mist">
-                ≈ {goalRate > 0 ? '+' : ''}{goalRate} kg/week ({profile ? planCheck(profile).ratePctBw : 0}% BW) · deficit capped at your BMR · retune any time — past days keep the goals they were logged under
+                {profile && (() => {
+                  const c = planCheck(profile)
+                  return <>honest pace ≈ <b className="text-bone">{c.actualRate > 0 ? '+' : ''}{c.actualRate} kg/week</b> ({c.ratePctBw}% BW{c.capped ? ', after the 25% deficit cap' : ''})</>
+                })()} · retune any time — past days keep the goals they were logged under
               </div>
             </div>
           )}

@@ -640,6 +640,60 @@ const recipeUpdate = async (uid: string, id: string, input: Record<string, unkno
   return { ok: true, id, recipe: data }
 }
 
+const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
+
+## Philosophy
+1. PROTEIN IS MANDATORY: the one hard daily target. Overshooting is a win, never a warning.
+2. CALORIES GOVERN THE DAY: judged against a ±10% band of the goal (green 90–110%).
+3. CARBS & FAT ARE FLEXIBLE ENERGY LEVERS: only flagged when total calories blow the budget.
+4. Exercise is NEVER credited 1:1 (wearable calories overestimate). See "endurance fuel" below.
+5. Everything derived from formulas is an ESTIMATE and labelled as such; the real calibrator is the user's weight trend vs the food-math (see /range energyBalance + body data).
+
+## The goal model
+- Settings hold rest-day and (optionally) training-day macro goals, plus a profile
+  (sex, birthYear, heightCm, weightKg, lifestyle activity EXCLUDING training, diet style,
+  proteinPerKg, goalRate kg/week).
+- Maintenance = Mifflin-St Jeor BMR × lifestyle factor (1.2–1.8). Training is deliberately
+  NOT in the factor — workouts are logged individually, so baselines assume a rest day.
+- Deficit guardrails: max deficit = 25% of rest TDEE; pace shown as % bodyweight/week
+  (muscle-safe cutting band ≈ 0.4–0.7%). When capped, the displayed pace is recomputed
+  from the ACTUAL deficit.
+- GOAL SNAPSHOTS: each day freezes its goals the first time it is written. Later Settings
+  changes apply from today forward — historical days, scores and reports never change.
+- ENDURANCE FUEL: when a day's logged workout burn exceeds 400 kcal, that day's goal grows
+  by 50% of the excess (capped +1000), added as carbs and labelled. A gym session adds ~0;
+  an 18 km run adds ~650. This is the ONLY exercise add-back.
+- Energy zones (informational): eaten vs (rest TDEE + logged exercise) → extreme cut /
+  aggressive / moderate / mild / maintenance / surplus, with est. kg/week.
+
+## Data semantics
+- Diary day = entries[] (food; macros BAKED IN at log time), workouts[], training flag,
+  sleep hours, steps, body {weightKg, bodyFatPct?, muscleKg?}, goals snapshot.
+- Steps precedence: manually typed > Garmin watch > phone Health Connect.
+- Alcohol entries carry alcohol:true and grams of pure alcohol; they count fully in totals.
+- Meal slots: breakfast, snack1, lunch, snack2, supper, snack3 (Africa/Johannesburg time).
+- Library foods: macros per 100 g/ml, or per 1 scoop/unit. Diary entries store final macros.
+- Recipes: sections keep each component's ingredients AND method together. Ingredient macros
+  are for the STATED qty (not per 100 g) so scaling one ingredient rescales the dish.
+  updateRecipe with sections REPLACES all sections — send the complete corrected list.
+- Weigh-ins update profile.weightKg automatically, keeping protein g/kg and zones current.
+
+## How to work (recommended flows)
+- Log a known food: searchFoods → logFood {foodId, amount in the food's own basis}.
+- Log a one-off: logFood {name, kcal, protein?, carbs?, fat?}.
+- Fix an entry: getDay (returns entry ids) → updateEntry (amount-only edits rescale macros)
+  or deleteEntry.
+- Weigh-in: logBody {weightKg, bodyFatPct?, muscleKg?}.
+- Reviews: getRange — check averages, compliance, energyBalance (logged days only,
+  unlogged days are missing data, never assumed) and compare implied kg vs actual weight
+  trend; if they disagree by >100 kcal/day, recommend retuning maintenance in Settings.
+- Every write returns updated totals, goal (incl. endurance fuel) and remaining — coach on it.
+
+## Judging a day fairly
+Use the day's OWN goal from getDay (it includes the frozen snapshot + endurance fuel).
+Do NOT compare a long-run day against a plain gym-day ceiling, and do not treat an
+under-logged day as a real deficit.`
+
 const uidForKey = async (key: string | undefined | null): Promise<string | null> => {
   if (!key || !/^[a-f0-9]{48}$/.test(key)) return null
   const snap = await db.doc(`mcpKeys/${key}`).get()
@@ -806,6 +860,12 @@ function buildServer(uid: string): McpServer {
   }
 
   server.registerTool(
+    'how_the_app_works',
+    { description: "READ THIS FIRST: the app's philosophy, goal model (snapshots, endurance fuel, guardrails), data semantics and recommended tool flows. Call it once per conversation before coaching." },
+    async () => ({ content: [{ type: 'text' as const, text: APP_GUIDE }] }),
+  )
+
+  server.registerTool(
     'search_recipes',
     {
       description: "List/search the user's saved recipes with per-portion macros and ids (needed for get_recipe / update_recipe).",
@@ -966,6 +1026,14 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
     }),
   },
   paths: {
+    '/guide': {
+      get: {
+        operationId: 'howTheAppWorks',
+        summary: 'READ THIS FIRST: app philosophy, goal model (snapshots, endurance fuel, deficit guardrails), data semantics and recommended action flows. Call once per conversation before coaching.',
+        security: [],
+        responses: { '200': { description: 'Markdown guide', content: { 'text/markdown': { schema: { type: 'string' } } } } },
+      },
+    },
     '/goals': {
       get: {
         operationId: 'getGoals',
@@ -1467,6 +1535,11 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
 
   // behind the hosting rewrite the original domain arrives via x-forwarded-host
   const host = req.get('x-forwarded-host')?.split(',')[0].trim() || req.get('host') || 'localhost'
+
+  if (req.method === 'GET' && path === '/guide') {
+    res.type('text/markdown').send(APP_GUIDE)
+    return
+  }
 
   // schema is public — it contains no data or secrets (keyed variant embeds
   // the caller's own key in the server URL and needs no auth config)

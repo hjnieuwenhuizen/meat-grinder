@@ -73,7 +73,7 @@ const macrosFor = (p: Profile, kcal: number, extraCarbsKcal = 0): Macros => {
   else carbsG = ((kcal - extraCarbsKcal) * diet.carbs + extraCarbsKcal) / 4
 
   let fatG = (kcal - proteinKcal - carbsG * 4) / 9
-  const fatFloor = p.weightKg * 0.6
+  const fatFloor = p.weightKg * 0.7
   if (fatG < fatFloor && typeof diet.carbs === 'number') {
     // protect the fat floor by taking energy back from carbs
     fatG = fatFloor
@@ -83,25 +83,38 @@ const macrosFor = (p: Profile, kcal: number, extraCarbsKcal = 0): Macros => {
   return { kcal: round10(kcal), protein: round5(protein), carbs: round5(carbsG), fat: round5(fatG) }
 }
 
-/** guardrails: rate as % bodyweight/week and a hard BMR floor —
- *  the muscle-safe cutting band is ~0.4–0.7% BW/week */
+/** guardrails, per coaching review:
+ *  - the primary cap is deficit ≤ 25% of rest TDEE (BMR is an ESTIMATE of
+ *    resting burn, not a magic safety threshold — it's advisory only)
+ *  - rate is expressed as % bodyweight/week (muscle-safe band ~0.4–0.7%)
+ *  - when the cap bites, the honest rate is recomputed from the ACTUAL
+ *    deficit, never the requested one */
+export const MAX_DEFICIT_PCT = 0.25
+
 export const planCheck = (p: Profile) => {
   const tdee = restTdee(p)
   const raw = tdee + (p.goalRate * KCAL_PER_KG) / 7
-  const floor = bmr(p)
+  const floorKcal = tdee * (1 - MAX_DEFICIT_PCT)
+  const target = Math.max(raw, floorKcal)
+  const actualRate = Math.round(((target - tdee) * 7 / KCAL_PER_KG) * 100) / 100
   const ratePctBw = Math.round((Math.abs(p.goalRate) / p.weightKg) * 1000) / 10
   return {
-    clampedAtBmr: raw < floor,
+    tdee: Math.round(tdee),
+    targetKcal: Math.round(target),
+    capped: raw < floorKcal - 1,
+    /** the truthful pace after any cap — display THIS, not the requested rate */
+    actualRate,
+    belowBmr: target < bmr(p),
     ratePctBw,
     tooFast: p.goalRate < 0 && ratePctBw > 0.85,
-    deficitPctTdee: p.goalRate < 0 ? Math.round(((tdee - Math.max(raw, floor)) / tdee) * 100) : 0,
+    deficitPctTdee: p.goalRate < 0 ? Math.round(((tdee - target) / tdee) * 100) : 0,
   }
 }
 
 /** the full plan the wizard writes into Settings */
 export const buildPlan = (p: Profile): GoalSnapshot => {
-  // never plan below BMR, whatever pace was requested
-  const restKcal = Math.max(bmr(p), restTdee(p) + (p.goalRate * KCAL_PER_KG) / 7)
+  // cap the deficit at 25% of rest TDEE, whatever pace was requested
+  const restKcal = Math.max(restTdee(p) * (1 - MAX_DEFICIT_PCT), restTdee(p) + (p.goalRate * KCAL_PER_KG) / 7)
   // training days earn a modest bump; carb-tolerant diets put it in carbs,
   // keto/carnivore put it in fat
   const bump = 300

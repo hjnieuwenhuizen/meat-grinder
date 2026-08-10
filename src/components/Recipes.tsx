@@ -123,7 +123,7 @@ function RecipeView({ recipe, uid, settings, onEdit, onClose }: {
   const totals = recipeTotals(recipe)
 
   return (
-    <Modal title={`${recipe.emoji ? `${recipe.emoji} ` : ''}${recipe.name}`} onClose={onClose}>
+    <Modal title={`${recipe.emoji ? `${recipe.emoji} ` : ''}${recipe.name}`} onClose={onClose} size="lg">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex flex-1 gap-1 rounded-full border border-edge bg-ink p-1">
           {TABS.map(([t, label]) => (
@@ -187,7 +187,7 @@ function CookTab({ recipe, uid, settings }: { recipe: Recipe; uid: string; setti
   return (
     <div className="space-y-3">
       <p className="text-xs text-mist">Cooked it differently? Adjust the amounts that actually went in — the dish and per-portion macros rescale live.</p>
-      <div className="max-h-64 space-y-3 overflow-y-auto pr-1">
+      <div className="max-h-64 space-y-3 overflow-y-auto pr-1 sm:max-h-96">
         {recipe.sections.map((s) => (
           <div key={s.id}>
             <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-grind/80">{s.title}</div>
@@ -248,7 +248,7 @@ function ShoppingTab({ recipe }: { recipe: Recipe }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-mist">Untick what you already have, then copy.</p>
-      <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+      <div className="max-h-72 space-y-1 overflow-y-auto pr-1 sm:max-h-96">
         {all.map((i) => (
           <label key={i.id} className="flex items-center gap-2.5 rounded-lg px-1 py-1 text-sm">
             <input
@@ -296,7 +296,7 @@ function RecipeForm({ initial, onSave, onClose }: {
   const valid = name.trim().length > 0 && sections.some((s) => s.ingredients.some((i) => i.name.trim()))
 
   return (
-    <Modal title={initial ? 'Edit recipe' : 'New recipe'} onClose={onClose}>
+    <Modal title={initial ? 'Edit recipe' : 'New recipe'} onClose={onClose} size="xl">
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -334,11 +334,11 @@ function RecipeForm({ initial, onSave, onClose }: {
                 </button>
               )}
             </div>
-            <div className="mb-1 grid grid-cols-[1fr_54px_54px_46px_40px_40px_40px_24px] gap-1 text-[9px] uppercase tracking-wider text-mist">
+            <div className="mb-1 grid grid-cols-[1fr_54px_54px_46px_40px_40px_40px_24px] sm:grid-cols-[1fr_80px_80px_70px_60px_60px_60px_28px] sm:gap-1.5 gap-1 text-[9px] uppercase tracking-wider text-mist">
               <span>Ingredient</span><span>Qty</span><span>Unit</span><span>kcal</span><span>P</span><span>C</span><span>F</span><span />
             </div>
             {s.ingredients.map((i) => (
-              <div key={i.id} className="mb-1 grid grid-cols-[1fr_54px_54px_46px_40px_40px_40px_24px] gap-1">
+              <div key={i.id} className="mb-1 grid grid-cols-[1fr_54px_54px_46px_40px_40px_40px_24px] sm:grid-cols-[1fr_80px_80px_70px_60px_60px_60px_28px] sm:gap-1.5 gap-1">
                 <input value={i.name} onChange={(e) => setIng(s.id, i.id, { name: e.target.value })} placeholder="mutton" className="min-w-0 rounded border border-edge bg-panel px-2 py-1 text-xs text-bone outline-none focus:border-grind/60" />
                 <input type="number" inputMode="decimal" value={i.qty || ''} onChange={(e) => setIng(s.id, i.id, { qty: Math.max(0, Number(e.target.value) || 0) })} className="rounded border border-edge bg-panel px-1 py-1 text-right text-xs text-bone outline-none" />
                 <input value={i.unit} onChange={(e) => setIng(s.id, i.id, { unit: e.target.value })} className="rounded border border-edge bg-panel px-1 py-1 text-xs text-bone outline-none" />
@@ -393,7 +393,7 @@ function ImportModal({ onImport, onClose }: {
   const [error, setError] = useState<string | null>(null)
 
   return (
-    <Modal title="Import recipe JSON" onClose={onClose}>
+    <Modal title="Import recipe JSON" onClose={onClose} size="lg">
       <div className="space-y-3">
         <p className="text-xs text-mist">
           Paste the JSON an AI produced from the <b className="text-bone">Copy AI prompt</b> template.
