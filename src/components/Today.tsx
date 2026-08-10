@@ -449,7 +449,8 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
   // the PLAN's position vs today's estimated burn — what the target means
   const plannedDelta = Math.round(goalKcal - r.maintenance)
   const bands = heroBands(r.maintenance)
-  const scaleMax = Math.max(goalKcal, r.maintenance + 400)
+  // scale grows with intake so the caret never pins to the edge
+  const scaleMax = Math.max(goalKcal, r.maintenance + 400, eaten + 150)
   const pct = (v: number) => Math.min(100, Math.max(0, (v / scaleMax) * 100))
 
   // band segments as [from, to] clamped to the scale
@@ -460,9 +461,12 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
   // ONE semantic rule: position and colour both come from estimated energy
   // balance. Target adherence ("333 over") is shown separately in the corner
   // and never colours this bar.
-  // finished days wear their verdict colour; a day in progress is just
-  // progress — brand green, no muddy neutral
-  const balanceColor = complete ? active.color : 'var(--color-grind)'
+  // Mid-day asymmetry: intake only goes UP, so being under burn is "still in
+  // progress" (brand green), but reaching maintain/gain is already a verdict —
+  // the fill takes the zone's colour even before the day is done.
+  const settled = active.id === 'maintain' || active.id === 'gain'
+  const verdict = complete || settled
+  const balanceColor = verdict ? active.color : 'var(--color-grind)'
 
   return (
     <div className="mt-4">
@@ -477,7 +481,7 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
         {/* eaten fill — coloured by where the day LANDS, not by target adherence */}
         <div
           className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
-          style={{ width: `${pct(eaten)}%`, background: balanceColor, opacity: complete ? 0.9 : 0.6 }}
+          style={{ width: `${pct(eaten)}%`, background: balanceColor, opacity: complete ? 0.9 : settled ? 0.75 : 0.6 }}
         />
         {/* zone boundaries, visible across the fill */}
         {cuts.slice(1, -1).map((c) => (
@@ -504,8 +508,8 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
         {segs.map((s) => (
           <div
             key={s.id}
-            className={`truncate text-center ${complete && s.id === active.id ? 'font-semibold' : 'text-mist/50'}`}
-            style={{ width: `${pct(s.to) - pct(s.from)}%`, ...(complete && s.id === active.id ? { color: s.color } : {}) }}
+            className={`truncate text-center ${verdict && s.id === active.id ? 'font-semibold' : 'text-mist/50'}`}
+            style={{ width: `${pct(s.to) - pct(s.from)}%`, ...(verdict && s.id === active.id ? { color: s.color } : {}) }}
           >
             {s.label}
           </div>
@@ -525,7 +529,9 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
           today's target sits <b className="text-bone">{Math.abs(plannedDelta).toLocaleString()} kcal {plannedDelta <= 0 ? 'below' : 'above'}</b> today's burn ≈ <b className="text-bone">{r.maintenance.toLocaleString()}</b>
           {plannedDelta < 0 ? <> · planned pace ≈ {kgPerWeek(plannedDelta)} kg/week</> : null}
           <span className="block text-mist/60">
-            stop eating now → ~{Math.abs(r.delta).toLocaleString()} kcal {r.delta <= 0 ? 'below' : 'above'} burn · the day isn't finished — no verdicts yet
+            {settled
+              ? <>already ~{Math.abs(r.delta).toLocaleString()} kcal {r.delta > 0 ? 'above' : 'at'} today's burn — that part won't undo; stop here, tomorrow is a normal day</>
+              : <>stop eating now → ~{Math.abs(r.delta).toLocaleString()} kcal below burn · the day isn't finished — no verdicts yet</>}
           </span>
         </div>
       )}
