@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   collection, doc, onSnapshot, getDoc, getDocs, setDoc, updateDoc, deleteDoc, deleteField,
-  query, where,
+  query, where, getAggregateFromServer, sum,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { startOfWeek, todayKey, addDays } from '../lib/dates'
@@ -28,6 +28,7 @@ export function useFamily(uid: string) {
   const [globalMembers, setGlobalMembers] = useState<Record<string, FamilyMember>>({})
   const [globalScores, setGlobalScores] = useState<ScoreDoc[]>([])
   const [challenges, setChallenges] = useState<ChallengeDoc[]>([])
+  const [allTimeSteps, setAllTimeSteps] = useState<Record<string, number>>({})
 
   useEffect(() => {
     return onSnapshot(pointerRef(uid), (snap) => {
@@ -52,6 +53,27 @@ export function useFamily(uid: string) {
       setScores(snap.docs.map((d) => d.data() as ScoreDoc))
     })
   }, [code])
+
+  // all-time step totals per member — server-side sums, no doc downloads.
+  // Refreshed when the member list or this week's scores change.
+  const memberKey = family ? Object.keys(family.members).sort().join(',') : ''
+  useEffect(() => {
+    if (!code || !memberKey) { setAllTimeSteps({}); return }
+    let on = true
+    void Promise.all(
+      memberKey.split(',').map(async (u) => {
+        const agg = await getAggregateFromServer(
+          query(collection(famRef(code), 'scores'), where('uid', '==', u)),
+          { steps: sum('steps') },
+        )
+        return [u, agg.data().steps] as const
+      }),
+    )
+      .then((pairs) => { if (on) setAllTimeSteps(Object.fromEntries(pairs)) })
+      .catch(() => {})
+    return () => { on = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, memberKey, scores])
 
   // the family's challenges
   useEffect(() => {
@@ -124,7 +146,7 @@ export function useFamily(uid: string) {
   }, [uid, code, global])
 
   return {
-    code, family, scores, create, join, leave, setPhoto,
+    code, family, scores, allTimeSteps, create, join, leave, setPhoto,
     global, globalMembers, globalScores, joinGlobal, leaveGlobal,
     challenges, addChallenge, removeChallenge,
   }

@@ -241,8 +241,47 @@ function FamilyBoard({ user, fam, onAvatar }: FamilyProps & { onAvatar: () => vo
         Week of {fmtDay(week[0])} – {fmtDay(week[6])} · crown resets Monday · tap your avatar to change it
       </p>
       <Standings rows={rows} uid={user.uid} onAvatar={onAvatar} />
+      <AllTimeSteps family={family} totals={fam.allTimeSteps} uid={user.uid} />
       <Challenges user={user} fam={fam} />
     </div>
+  )
+}
+
+/* --- all-time steps: the forever race, no weekly reset --- */
+
+function AllTimeSteps({ family, totals, uid }: {
+  family: { members: Record<string, FamilyMember> }
+  totals: Record<string, number>
+  uid: string
+}) {
+  const rows = Object.entries(family.members)
+    .map(([u, member]) => ({ uid: u, member, steps: totals[u] ?? 0 }))
+    .sort((a, b) => b.steps - a.steps || a.member.name.localeCompare(b.member.name))
+  const leader = rows[0]
+  if (!rows.length) return null
+
+  return (
+    <Panel className="p-4">
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-mist">👟 All-time steps</h3>
+        <span className="text-[10px] text-mist/70">every step since joining · never resets</span>
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((r, i) => (
+          <div key={r.uid} className="flex items-center gap-2 text-sm">
+            <span className="w-6 text-center">{medal(i) ?? <span className="text-xs text-mist">{i + 1}</span>}</span>
+            <span className={`min-w-0 flex-1 truncate ${r.uid === uid ? 'text-grind' : ''}`}>
+              {r.member.name}{i === 0 && r.steps > 0 ? ' 👑' : ''}
+            </span>
+            <span className="font-semibold tabular-nums">{r.steps.toLocaleString()}</span>
+            {i > 0 && leader.steps > 0 && (
+              <span className="w-20 text-right text-xs tabular-nums text-mist">−{(leader.steps - r.steps).toLocaleString()}</span>
+            )}
+            {i === 0 && <span className="w-20" />}
+          </div>
+        ))}
+      </div>
+    </Panel>
   )
 }
 
