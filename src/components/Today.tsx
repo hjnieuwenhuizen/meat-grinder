@@ -183,7 +183,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
           </div>
         </div>
         {settings.profile ? (
-          <ZonedKcalBar profile={settings.profile} day={day} eaten={totals.kcal} goalKcal={goal.kcal} fillColor={kcalColor} complete={key < todayKey()} />
+          <ZonedKcalBar profile={settings.profile} day={day} eaten={totals.kcal} goalKcal={goal.kcal} complete={key < todayKey()} />
         ) : (
           <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-edge">
             <div
@@ -430,12 +430,11 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
 // The main calorie bar, zoned against today's ACTUAL burn (rest metabolism +
 // logged exercise). Bands move right when you train. Everything here is an
 // estimate and labelled as such — and the goal budget never eats back burn.
-function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor, complete }: {
+function ZonedKcalBar({ profile, day, eaten, goalKcal, complete }: {
   profile: Profile
   day: DayDoc
   eaten: number
   goalKcal: number
-  fillColor: string
   /** past days are finished stories; today is still being written */
   complete: boolean
 }) {
@@ -451,9 +450,14 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor, complete }: {
   const segs = bands.map((b, i) => ({ ...b, from: cuts[i], to: Math.min(cuts[i + 1], scaleMax) }))
   // the zone the day FINISHED in — only meaningful once the day is complete
   const active = segs.find((s) => eaten >= s.from && eaten < s.to) ?? segs[segs.length - 1]
+  // ONE semantic rule: position and colour both come from estimated energy
+  // balance. Target adherence ("333 over") is shown separately in the corner
+  // and never colours this bar.
+  const balanceColor = complete ? active.color : 'var(--color-mist)'
 
   return (
     <div className="mt-4">
+      <div className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-mist/60">Estimated energy balance</div>
       <div className="relative h-3 overflow-hidden rounded-full bg-edge">
         {/* zone tint */}
         <div className="absolute inset-0 flex">
@@ -461,10 +465,10 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor, complete }: {
             <div key={s.id} style={{ width: `${pct(s.to) - pct(s.from)}%`, background: s.color, opacity: 0.22 }} />
           ))}
         </div>
-        {/* eaten fill */}
+        {/* eaten fill — coloured by where the day LANDS, not by target adherence */}
         <div
           className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
-          style={{ width: `${pct(eaten)}%`, background: fillColor, opacity: 0.9 }}
+          style={{ width: `${pct(eaten)}%`, background: balanceColor, opacity: complete ? 0.9 : 0.45 }}
         />
         {/* zone boundaries, visible across the fill */}
         {cuts.slice(1, -1).map((c) => (
@@ -481,7 +485,7 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor, complete }: {
       <div className="relative h-3">
         <div
           className="absolute flex -translate-x-1/2 items-center gap-0.5 text-[9px] leading-3 transition-all duration-500"
-          style={{ left: `${pct(eaten)}%`, color: complete ? fillColor : 'var(--color-mist)' }}
+          style={{ left: `${pct(eaten)}%`, color: balanceColor }}
         >
           ▲{!complete && <span>now</span>}
         </div>
@@ -504,7 +508,7 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor, complete }: {
           {r.exerciseKcal ? <> (incl. ~{r.exerciseKcal.toLocaleString()} exercise{r.watchKcal > r.exerciseKcal ? ` — watch said ${r.watchKcal.toLocaleString()}` : ''})</> : null}
           {' · '}finished <b className="text-bone">{Math.abs(r.delta).toLocaleString()} {r.delta <= 0 ? 'below' : 'above'}</b> burn
           {' = '}<b style={{ color: r.zone.color }}>{r.zone.label}</b>
-          {r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week` : ''}
+          {r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week if repeated` : ''}
           <span className="text-mist/60"> · estimates, not gospel</span>
         </div>
       ) : (
