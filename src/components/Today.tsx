@@ -61,9 +61,15 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
   const kcalPct = Math.min(totals.kcal / goal.kcal, 1)
   // acceptable range: 90–110% of goal
   const ratio = goal.kcal > 0 ? totals.kcal / goal.kcal : 0
-  const kcalStatus = ratio > 1.1 ? 'over' : ratio >= 0.9 ? 'good' : 'low'
+  // three thresholds, not two: below target / above target but still below
+  // estimated burn (smaller deficit than planned — NOT a surplus) / true surplus.
+  // Red is reserved for the last one; missing the target is amber attention.
+  const readout = settings.profile ? energyReadout(settings.profile, day, totals.kcal) : null
+  const surplus = readout ? totals.kcal > readout.maintenance : ratio > 1.1
+  const kcalStatus =
+    ratio > 1.1 ? (surplus ? 'surplus' : 'trim') : ratio >= 0.9 ? 'good' : 'low'
   const kcalColor =
-    kcalStatus === 'over' ? 'var(--color-over)'
+    kcalStatus === 'surplus' ? 'var(--color-over)'
     : kcalStatus === 'good' ? 'var(--color-grind)'
     : 'var(--color-carbs)'
 
@@ -166,7 +172,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
           <div>
             <div className="text-xs font-medium uppercase tracking-wider text-mist">Calories</div>
             <div className="mt-1 flex items-baseline gap-2">
-              <span className={`text-5xl font-bold tabular-nums ${kcalStatus === 'over' ? 'text-over' : ''}`}>
+              <span className={`text-5xl font-bold tabular-nums ${kcalStatus === 'surplus' ? 'text-over' : ''}`}>
                 {Math.round(totals.kcal)}
               </span>
               <span className="text-mist">/ {Math.round(goal.kcal)}</span>
@@ -178,8 +184,18 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
             )}
           </div>
           <div className="text-right text-sm font-medium" style={{ color: kcalColor }}>
-            {left < 0 ? `${-left} over` : `${left} left`}
+            {left >= 0 ? `${left} left` : kcalStatus === 'surplus' ? `${-left} over — true surplus` : `${-left} above target`}
             {kcalStatus === 'good' && <span className="ml-1.5 text-xs opacity-80">in range</span>}
+            {kcalStatus === 'trim' && readout && (
+              <span className="block text-[11px] font-normal text-mist">
+                still {(readout.maintenance - Math.round(totals.kcal)).toLocaleString()} below burn — smaller deficit than planned
+              </span>
+            )}
+            {kcalStatus === 'surplus' && readout && (
+              <span className="block text-[11px] font-normal text-mist">
+                {(Math.round(totals.kcal) - readout.maintenance).toLocaleString()} above even today's burn
+              </span>
+            )}
           </div>
         </div>
         {settings.profile ? (
@@ -206,7 +222,7 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
       </Panel>
 
       {/* today's mission */}
-      <Mission goal={goal} totals={totals} day={day} foods={foods} onRescue={() => setRescuing(true)} />
+      <Mission goal={goal} totals={totals} day={day} surplus={surplus} foods={foods} onRescue={() => setRescuing(true)} />
 
       {/* macro rings — protein is a hard target; carbs/fat are flexible energy
           levers judged by the calorie budget, never by their own line */}
@@ -219,9 +235,8 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
             const r = g > 0 ? val / g : 0
             color = r >= 1 ? 'var(--color-protein)' : r >= 0.8 ? 'var(--color-carbs)' : 'var(--color-mist)'
           } else {
-            const kcalR = goal.kcal > 0 ? totals.kcal / goal.kcal : 0
-            if (kcalR > 1.05) color = 'var(--color-over)' // calorie budget blown
-            else if (g > 0 && val > g) color = 'var(--color-carbs)' // over its own line, calories fine
+            if (surplus) color = 'var(--color-over)' // true energy surplus
+            else if (g > 0 && val > g) color = 'var(--color-carbs)' // over its own line, energy still fine
             else color = 'var(--color-grind)'
           }
           return (
@@ -579,7 +594,7 @@ function BodyModal({ initial, onSave, onClose }: {
   )
 }
 
-function Mission({ goal, totals, day, foods, onRescue }: { goal: Macros; totals: Macros; day: DayDoc; foods: Food[]; onRescue: () => void }) {
+function Mission({ goal, totals, day, surplus, foods, onRescue }: { goal: Macros; totals: Macros; day: DayDoc; surplus: boolean; foods: Food[]; onRescue: () => void }) {
   const pLeft = Math.round(goal.protein - totals.protein)
   const kLeft = Math.round(goal.kcal - totals.kcal)
   const fLeft = Math.round(goal.fat - totals.fat)
@@ -596,8 +611,11 @@ function Mission({ goal, totals, day, foods, onRescue }: { goal: Macros; totals:
       </>
     )
   else if (pLeft > 0 && kLeft < 0)
-    text = <>Still <b className="text-bone">{pLeft}g protein short</b>, {-kLeft} kcal over{boozeKcal > 300 ? <> — <span className="text-over">{boozeKcal} of it alcohol</span></> : null}. Protein first — go lean. Tomorrow is a normal day: no fasting, no punishment cardio.</>
-  else if (kLeft < 0) text = <>Protein hit. <b className="text-bone">{-kLeft} kcal over</b> — stop grinding.{boozeKcal > 300 ? <> ({boozeKcal} kcal was alcohol.)</> : null}</>
+    text = <>Still <b className="text-bone">{pLeft}g protein short</b>, {-kLeft} kcal above target{boozeKcal > 300 ? <> — <span className="text-over">{boozeKcal} of it alcohol</span></> : null}.{!surplus && <> Target missed ≠ fat gain — you're likely still under today's burn.</>} Protein first — go lean. Tomorrow is a normal day: no fasting, no punishment cardio.</>
+  else if (kLeft < 0)
+    text = surplus
+      ? <>Protein hit. <b className="text-bone">{-kLeft} kcal over</b> — a true surplus today. Stop grinding.{boozeKcal > 300 ? <> ({boozeKcal} kcal was alcohol.)</> : null}</>
+      : <>Protein hit. <b className="text-bone">{-kLeft} kcal above target</b> — smaller deficit than planned, not a disaster. Stop here.{boozeKcal > 300 ? <> ({boozeKcal} kcal was alcohol.)</> : null}</>
   else if (kLeft > 150) text = <>Protein hit. <b className="text-bone">{kLeft} kcal</b> remaining. Carbs and fat are flexible.</>
   else text = <>Goals hit. Go lift something heavy. 🏋️</>
 

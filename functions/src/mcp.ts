@@ -650,6 +650,9 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
 ## Philosophy
 1. PROTEIN IS MANDATORY: the one hard daily target. Overshooting is a win, never a warning.
 2. CALORIES GOVERN THE DAY: judged against a ±10% band of the goal (green 90–110%).
+   Three thresholds, not two: above target but below estimated burn = a SMALLER DEFICIT
+   than planned, not a surplus — never coach it as overeating. True surplus only when
+   intake exceeds estimated expenditure.
 3. CARBS & FAT ARE FLEXIBLE ENERGY LEVERS: only flagged when total calories blow the budget.
 4. Exercise is NEVER credited 1:1 (wearable calories overestimate). See "endurance fuel" below.
 5. Everything derived from formulas is an ESTIMATE and labelled as such; the real calibrator is the user's weight trend vs the food-math (see /range energyBalance + body data).
