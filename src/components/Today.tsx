@@ -9,7 +9,7 @@ import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetail
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
 import { energyReadout, heroBands, applyFuel } from '../lib/coach'
-import type { DayDoc, Profile } from '../types'
+import type { BodyLog, DayDoc, Profile } from '../types'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
 
@@ -22,17 +22,19 @@ interface TodayProps {
   addFood: FoodsApi['addFood']
   updateFood: FoodsApi['updateFood']
   publish: PublishTargets
+  saveSettings: (s: Settings) => void | Promise<void>
 }
 
 type Drag = { id: string; kind: 'entry' | 'workout' } | null
 
-export default function Today({ uid, settings, foods, addFood, updateFood, publish }: TodayProps) {
+export default function Today({ uid, settings, foods, addFood, updateFood, publish, saveSettings }: TodayProps) {
   const [key, setKey] = useState(todayKey())
-  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout } = useDay(uid, key, settings)
+  const { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout, setBody } = useDay(uid, key, settings)
   const [adding, setAdding] = useState(false)
   const [rescuing, setRescuing] = useState(false)
   const [editing, setEditing] = useState<Entry | null>(null)
   const [editingWorkout, setEditingWorkout] = useState<Workout | 'new' | null>(null)
+  const [bodyOpen, setBodyOpen] = useState(false)
   const [drag, setDrag] = useState<Drag>(null)
   const [dragOver, setDragOver] = useState<MealId | null>(null)
 
@@ -147,6 +149,15 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
             ❤️ <b className="font-medium text-bone">{day.garmin.restingHr}</b> bpm rest
           </span>
         ) : null}
+        <button
+          type="button"
+          onClick={() => setBodyOpen(true)}
+          className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist transition hover:border-grind/40 hover:text-bone"
+          title="Log weight / body composition"
+        >
+          ⚖️ {day.body?.weightKg ? <b className="font-medium text-bone">{day.body.weightKg} kg</b> : <span>weigh-in</span>}
+          {day.body?.bodyFatPct ? <span className="text-xs">· {day.body.bodyFatPct}% bf</span> : null}
+        </button>
       </div>
 
       {/* calories hero */}
@@ -381,6 +392,20 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
         />
       )}
 
+      {bodyOpen && (
+        <BodyModal
+          initial={day.body}
+          onSave={(body) => {
+            void setBody(body)
+            // keep the calculator honest: latest weigh-in updates the profile
+            if (body && settings.profile && Math.abs(settings.profile.weightKg - body.weightKg) > 0.05) {
+              void saveSettings({ ...settings, profile: { ...settings.profile, weightKg: body.weightKg } })
+            }
+          }}
+          onClose={() => setBodyOpen(false)}
+        />
+      )}
+
       {editing && (
         <EditEntry
           entry={editing}
@@ -461,6 +486,60 @@ function ZonedKcalBar({ profile, day, eaten, goalKcal, fillColor }: {
   )
 }
 
+
+function BodyModal({ initial, onSave, onClose }: {
+  initial?: BodyLog
+  onSave: (body: BodyLog | null) => void
+  onClose: () => void
+}) {
+  const [weight, setWeight] = useState(initial?.weightKg ? String(initial.weightKg) : '')
+  const [bf, setBf] = useState(initial?.bodyFatPct ? String(initial.bodyFatPct) : '')
+  const [muscle, setMuscle] = useState(initial?.muscleKg ? String(initial.muscleKg) : '')
+  const w = Number(weight)
+  const valid = w >= 30 && w <= 300
+
+  return (
+    <Modal title="Weigh-in" onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!valid) return
+          onSave({
+            weightKg: Math.round(w * 10) / 10,
+            bodyFatPct: Number(bf) > 0 && Number(bf) < 75 ? Math.round(Number(bf) * 10) / 10 : null,
+            muscleKg: Number(muscle) > 0 && Number(muscle) < 100 ? Math.round(Number(muscle) * 10) / 10 : null,
+          })
+          onClose()
+        }}
+        className="space-y-3"
+      >
+        <p className="text-xs text-mist">Same scale, same time of day (morning, before eating) — the trend matters, not the single number.</p>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Weight (kg)" type="number" inputMode="decimal" step="0.1" value={weight} onChange={(e) => setWeight(e.target.value)} autoFocus />
+          <Field label="Body fat % (opt.)" type="number" inputMode="decimal" step="0.1" value={bf} onChange={(e) => setBf(e.target.value)} />
+          <Field label="Muscle kg (opt.)" type="number" inputMode="decimal" step="0.1" value={muscle} onChange={(e) => setMuscle(e.target.value)} />
+        </div>
+        <div className="flex gap-2">
+          {initial && (
+            <button
+              type="button"
+              onClick={() => { onSave(null); onClose() }}
+              className="rounded-full border border-edge px-4 py-2.5 text-sm font-medium text-mist hover:text-over"
+            >
+              Remove
+            </button>
+          )}
+          <button
+            type="submit" disabled={!valid}
+            className="flex-1 rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
 
 function Mission({ goal, totals, foods, onRescue }: { goal: Macros; totals: Macros; foods: Food[]; onRescue: () => void }) {
   const pLeft = Math.round(goal.protein - totals.protein)

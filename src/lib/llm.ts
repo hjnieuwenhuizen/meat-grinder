@@ -64,6 +64,9 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
           `Energy: ${r.eaten} kcal eaten vs ~${r.maintenance} burned${r.exerciseKcal ? ` (incl. ${r.exerciseKcal} exercise)` : ''} → ${r.delta > 0 ? '+' : ''}${r.delta} kcal · ${r.zone.label}${r.zone.id !== 'maintenance' ? ` ≈ ${r.kgWeek > 0 ? '+' : ''}${r.kgWeek} kg/week at this pace` : ''}`,
         )
       }
+      if (day.body?.weightKg) {
+        extra.push(`Weight: ${day.body.weightKg} kg${day.body.bodyFatPct ? ` · ${day.body.bodyFatPct}% body fat` : ''}${day.body.muscleKg ? ` · ${day.body.muscleKg} kg skeletal muscle` : ''}`)
+      }
       if (day.sleep) extra.push(`Sleep last night: ${day.sleep}h`)
       const steps = stepsOf(day) || null
       if (steps) extra.push(`Steps: ${steps.toLocaleString()}${day.steps ? ' (manual)' : ' (Garmin)'}`)
@@ -100,6 +103,7 @@ export function rangeReport(
       ? ` | trained: ${day.workouts.map((w) => `${workoutTitle(w)}${workoutDetails(w) ? ` (${workoutDetails(w)})` : ''}`).join(', ')}`
       : ''
     const sleep = day.sleep ? ` | sleep ${day.sleep}h` : ''
+    const body = day.body?.weightKg ? ` | weight ${day.body.weightKg}kg${day.body.bodyFatPct ? ` (${day.body.bodyFatPct}% bf)` : ''}` : ''
     const steps = stepsOf(day) || null
     const wellness = [
       steps ? ` | steps ${steps}` : '',
@@ -110,7 +114,7 @@ export function rangeReport(
     const grams = drinks.reduce((s, e) => s + (e.alcoholG || 0), 0)
     const booze = shame > 0 ? ` | alcohol ${Math.round(shame)} kcal${grams > 0 ? ` (${Math.round(grams)}g)` : ''}` : ''
     return [
-      `- ${fmtDay(k)} (${k})${tag}: ${line(t)} (goal ${Math.round(goal.kcal)} kcal${fuel > 0 ? ` incl. ${fuel} fuel` : ''})${trained}${sleep}${wellness}${booze}`,
+      `- ${fmtDay(k)} (${k})${tag}: ${line(t)} (goal ${Math.round(goal.kcal)} kcal${fuel > 0 ? ` incl. ${fuel} fuel` : ''})${trained}${sleep}${body}${wellness}${booze}`,
       ...day.entries.map((e) => `  - ${e.alcohol ? '[Alcohol] ' : ''}${e.name}${fmtAmount(e) ? ` (${fmtAmount(e)})` : ''}: ${line(e)}`),
     ]
   })
@@ -143,6 +147,15 @@ export function rangeReport(
     compliance = `Compliance: ${Math.round((hits.reduce((a, b) => a + b, 0) / (logged.length * 2)) * 100)}% (protein ≥95% of goal, kcal within ±10%)`
   }
 
+  let bodyTrend = ''
+  const weighs = keys.filter((k) => daysByKey[k]?.body?.weightKg)
+  if (weighs.length) {
+    const firstW = daysByKey[weighs[0]].body!.weightKg
+    const lastW = daysByKey[weighs[weighs.length - 1]].body!.weightKg
+    const d = Math.round((lastW - firstW) * 100) / 100
+    bodyTrend = `Body: latest ${lastW} kg${weighs.length > 1 ? `, ${d > 0 ? '+' : ''}${d} kg across ${weighs.length} weigh-ins in this range` : ''} — compare against the implied energy-balance change to calibrate maintenance`
+  }
+
   let energy = ''
   if (settings.profile) {
     const counted = logged.map((k) => energyReadout(settings.profile!, daysByKey[k], totalsOf(daysByKey[k]).kcal))
@@ -156,7 +169,7 @@ export function rangeReport(
   return [
     `# Meat Grinder — ${title}`,
     `Goals: rest ${line(settings.rest)}${settings.trainingEnabled ? ` | training ${line(settings.training)}` : ''}`,
-    ...[avg, compliance, energy].filter(Boolean),
+    ...[avg, compliance, energy, bodyTrend].filter(Boolean),
     '',
     '## Days',
     ...rows,

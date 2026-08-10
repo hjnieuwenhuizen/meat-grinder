@@ -269,6 +269,9 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
             <EnergyBalance profile={settings.profile} keys={keys} days={days} />
           )}
 
+          {/* body trend + food-math calibration */}
+          <BodyTrend keys={keys} days={days} settings={settings} />
+
           {/* per-day table */}
           <Panel className="divide-y divide-edge">
             {keys.filter((k) => k <= todayKey()).map((k) => {
@@ -400,6 +403,82 @@ function EnergyBalance({ profile, keys, days }: {
         {' '}→ implied weight change ≈ <b style={{ color: estKg <= 0 ? 'var(--color-grind)' : 'var(--color-fat)' }}>{estKg > 0 ? '+' : ''}{estKg} kg</b>
         {rows.some((x) => !x.logged) && <span className="text-mist/60"> · unlogged days excluded, not assumed</span>}
       </div>
+    </Panel>
+  )
+}
+
+// Weight trend (raw weigh-ins + 7-day rolling average) and, when possible,
+// the calibration check: does the scale agree with the food math?
+function BodyTrend({ keys, days, settings }: {
+  keys: string[]
+  days: Record<string, DayDoc>
+  settings: Settings
+}) {
+  const points = keys
+    .filter((k) => k <= todayKey() && days[k]?.body?.weightKg)
+    .map((k) => ({ k, w: days[k].body!.weightKg, bf: days[k].body!.bodyFatPct ?? null, mus: days[k].body!.muscleKg ?? null }))
+  if (points.length < 1) return null
+
+  // rolling 7-day average per weigh-in (by calendar distance)
+  const dayNum = (k: string) => Math.floor(fromKey(k).getTime() / 86400000)
+  const rolled = points.map((pt) => {
+    const n0 = dayNum(pt.k)
+    const win = points.filter((q) => n0 - dayNum(q.k) >= 0 && n0 - dayNum(q.k) < 7)
+    return { ...pt, avg: win.reduce((s, q) => s + q.w, 0) / win.length }
+  })
+
+  const first = rolled[0]
+  const last = rolled[rolled.length - 1]
+  const spanDays = Math.max(1, dayNum(last.k) - dayNum(first.k))
+  const deltaKg = Math.round((last.avg - first.avg) * 100) / 100
+  const perWeek = Math.round(((deltaKg / spanDays) * 7) * 100) / 100
+
+  // svg polyline
+  const ws = rolled.map((r) => r.w)
+  const min = Math.min(...ws) - 0.4
+  const max = Math.max(...ws) + 0.4
+  const x = (i: number) => (rolled.length === 1 ? 50 : (i / (rolled.length - 1)) * 100)
+  const y = (w: number) => 38 - ((w - min) / (max - min)) * 34
+  const rawPath = rolled.map((r, i) => `${x(i)},${y(r.w)}`).join(' ')
+  const avgPath = rolled.map((r, i) => `${x(i)},${y(r.avg)}`).join(' ')
+
+  // calibration: scale trend vs food-math over the same span
+  let calibration: string | null = null
+  if (settings.profile && points.length >= 3 && spanDays >= 14) {
+    const loggedKeys = keys.filter((k) => k >= first.k && k <= last.k && days[k]?.entries?.length)
+    if (loggedKeys.length >= spanDays * 0.6) {
+      const implied = loggedKeys.reduce((s, k) => s + energyReadout(settings.profile!, days[k], totalsOf(days[k]).kcal).delta, 0) / KCAL_PER_KG
+      const diffKcalPerDay = Math.round(((implied - deltaKg) * KCAL_PER_KG) / spanDays)
+      if (Math.abs(diffKcalPerDay) > 120) {
+        calibration = `Scale says ${deltaKg > 0 ? '+' : ''}${deltaKg} kg; food-math implied ${implied > 0 ? '+' : ''}${Math.round(implied * 100) / 100} kg → your real maintenance is ≈ ${diffKcalPerDay > 0 ? '' : '+'}${-diffKcalPerDay} kcal/day ${diffKcalPerDay > 0 ? 'lower' : 'higher'} than estimated. Consider retuning in Settings.`
+      } else {
+        calibration = 'Scale and food-math agree within noise — your maintenance estimate is well calibrated.'
+      }
+    }
+  }
+
+  return (
+    <Panel className="p-4">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-medium uppercase tracking-wider text-mist">Body</span>
+        <span className="text-[10px] text-mist">dots = weigh-ins · line = 7-day average (the trend that matters)</span>
+      </div>
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="h-24 w-full">
+        <polyline points={rawPath} fill="none" stroke="var(--color-edge)" strokeWidth="0.6" />
+        {rolled.map((r, i) => (
+          <circle key={r.k} cx={x(i)} cy={y(r.w)} r="1.1" fill="var(--color-mist)" />
+        ))}
+        <polyline points={avgPath} fill="none" stroke="var(--color-grind)" strokeWidth="1" />
+      </svg>
+      <div className="mt-1 text-xs text-mist">
+        <b className="text-bone">{last.w} kg</b> latest
+        {points.length > 1 && (
+          <> · trend <b style={{ color: deltaKg <= 0 ? 'var(--color-grind)' : 'var(--color-fat)' }}>{deltaKg > 0 ? '+' : ''}{deltaKg} kg</b> over {spanDays}d ({perWeek > 0 ? '+' : ''}{perWeek} kg/week)</>
+        )}
+        {last.bf ? <> · {last.bf}% bf</> : null}
+        {last.mus ? <> · {last.mus} kg muscle</> : null}
+      </div>
+      {calibration && <p className="mt-1.5 text-[11px] text-carbs">{calibration}</p>}
     </Panel>
   )
 }

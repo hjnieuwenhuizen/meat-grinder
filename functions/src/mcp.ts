@@ -59,6 +59,8 @@ interface DayDoc {
   health?: { steps?: number | null }
   /** goals frozen when the day was first written — later Settings edits never rewrite history */
   goals?: { trainingEnabled: boolean; rest: Macros; training: Macros }
+  /** morning weigh-in */
+  body?: { weightKg: number; bodyFatPct?: number | null; muscleKg?: number | null }
 }
 
 const totalsOf = (entries: Entry[]): Macros =>
@@ -167,6 +169,7 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
     energy: energyOf(settings, day, totals.kcal),
     totals,
     sleepHours: day.sleep ?? null,
+    body: day.body ?? null,
     steps: day.steps ?? day.garmin?.steps ?? day.health?.steps ?? null,
     restingHeartRate: day.garmin?.restingHr ?? null,
     alcohol: alcohol.length
@@ -500,6 +503,33 @@ const entryDelete = async (uid: string, date: string, entryId: string) => {
   return { ok: true, date, deleted: removed ? { name: removed.name, ...round(removed) } : null, ...(await budgetAfter(uid, day)) }
 }
 
+const logBody = async (
+  uid: string,
+  date: string,
+  input: { weightKg: number; bodyFatPct?: number | null; muscleKg?: number | null },
+) => {
+  const w = Number(input.weightKg)
+  if (!(w >= 30 && w <= 300)) throw new Error('weightKg must be between 30 and 300')
+  const body = {
+    weightKg: Math.round(w * 10) / 10,
+    bodyFatPct: Number(input.bodyFatPct) > 0 && Number(input.bodyFatPct) < 75 ? Math.round(Number(input.bodyFatPct) * 10) / 10 : null,
+    muscleKg: Number(input.muscleKg) > 0 && Number(input.muscleKg) < 100 ? Math.round(Number(input.muscleKg) * 10) / 10 : null,
+  }
+  const dayRef = db.doc(`users/${uid}/days/${date}`)
+  const snap = await dayRef.get()
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...(snap.data() as Partial<DayDoc>) }
+  day.body = body
+  const settings = await loadSettings(uid)
+  stampGoals(day, settings as Record<string, unknown>)
+  await dayRef.set(day)
+  // keep the calculator honest: latest weigh-in updates the profile weight
+  const profile = (settings as { profile?: { weightKg?: number } }).profile
+  if (profile && Math.abs((profile.weightKg ?? 0) - body.weightKg) > 0.05) {
+    await db.doc(`users/${uid}/meta/settings`).set({ ...settings, profile: { ...profile, weightKg: body.weightKg } })
+  }
+  return { ok: true, date, body }
+}
+
 const uidForKey = async (key: string | undefined | null): Promise<string | null> => {
   if (!key || !/^[a-f0-9]{48}$/.test(key)) return null
   const snap = await db.doc(`mcpKeys/${key}`).get()
@@ -594,6 +624,21 @@ function buildServer(uid: string): McpServer {
       },
     },
     async (input) => text(await logFood(uid, input as LogFoodInput)),
+  )
+
+  server.registerTool(
+    'log_body',
+    {
+      description: "Log the user's weigh-in for a day: weight (kg) required, body fat %% and skeletal muscle kg optional. Updates the profile weight so future calculations stay honest.",
+      inputSchema: {
+        weightKg: z.number().min(30).max(300),
+        bodyFatPct: z.number().positive().max(75).optional(),
+        muscleKg: z.number().positive().max(100).optional(),
+        date: z.string().regex(DATE_RX).optional().describe('YYYY-MM-DD, defaults to today'),
+      },
+    },
+    async ({ date, ...input }) =>
+      text(await logBody(uid, date && DATE_RX.test(date) ? date : localDateKey(), input)),
   )
 
   server.registerTool(
@@ -891,6 +936,46 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/body': {
+      post: {
+        operationId: 'logBody',
+        summary: "Log a weigh-in: weight kg (required), body fat %% and skeletal muscle kg (optional). Defaults to today; also updates the profile weight.",
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['weightKg'],
+                properties: {
+                  weightKg: { type: 'number' },
+                  bodyFatPct: { type: 'number' },
+                  muscleKg: { type: 'number', description: 'skeletal muscle mass in kg' },
+                  date: { type: 'string', description: 'YYYY-MM-DD, defaults to today' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Saved weigh-in',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' },
+                    date: { type: 'string' },
+                    body: { type: 'object', properties: { weightKg: { type: 'number' }, bodyFatPct: { type: ['number', 'null'] }, muscleKg: { type: ['number', 'null'] } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/entry': {
       patch: {
         operationId: 'updateEntry',
@@ -1104,7 +1189,14 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
   const foodIdMatch = path.match(/^\/foods\/([A-Za-z0-9]+)$/)
 
   try {
-    if (req.method === 'PATCH' && path === '/entry') {
+    if (req.method === 'POST' && path === '/body') {
+      const { date, ...input } = body as { date?: string; weightKg: number; bodyFatPct?: number; muscleKg?: number }
+      try {
+        res.json(await logBody(uid, date && DATE_RX.test(date) ? date : localDateKey(), input))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+    } else if (req.method === 'PATCH' && path === '/entry') {
       const { date, entryId, ...changes } = body as { date?: string; entryId?: string } & EntryChanges
       if (!date || !DATE_RX.test(date) || !entryId) {
         res.status(400).json({ error: 'date (YYYY-MM-DD) and entryId are required — get ids from getDay' })

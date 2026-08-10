@@ -120,6 +120,14 @@ export interface DayDoc {
   health?: { steps?: number | null }
   /** goals frozen at log time — see GoalSnapshot */
   goals?: GoalSnapshot
+  /** morning weigh-in — weight required, composition optional */
+  body?: BodyLog
+}
+
+export interface BodyLog {
+  weightKg: number
+  bodyFatPct?: number | null
+  muscleKg?: number | null
 }
 
 /* --- family leaderboard --- */

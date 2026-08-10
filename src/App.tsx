@@ -98,7 +98,7 @@ function Shell({ user, tab, setTab }: { user: User; tab: Tab; setTab: (t: Tab) =
         <GoalWizard onSave={(next) => save(next)} onClose={() => setWizardDismissed(true)} />
       )}
 
-      {tab === 'Diary' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} publish={publish} />}
+      {tab === 'Diary' && <Today uid={user.uid} settings={settings} foods={foodsApi.foods} addFood={foodsApi.addFood} updateFood={foodsApi.updateFood} publish={publish} saveSettings={save} />}
       {tab === 'Compete' && <Compete user={user} fam={fam} />}
       {tab === 'Reports' && <Reports uid={user.uid} settings={settings} />}
       {tab === 'Library' && <Foods {...foodsApi} />}

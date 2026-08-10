@@ -64,7 +64,7 @@ Real users (and their history) exist in production. Any schema change follows th
 
 - Do not store Garmin (or any) passwords beyond the pending-connect flow: credentials may sit in `users/{uid}/meta/garminPending` (owner-only) while Garmin rate-limits our IP, and MUST be deleted on the first successful login or on bad credentials. Never widen this.
 - Do not commit secrets or personal deployment config. Firebase web config comes from `.env.local` (gitignored, template in `.env.example`); `.firebaserc` is gitignored — never hardcode project ids in source.
-- Do not add weight tracking, AI coaching, or activity-based carb presets without being asked — considered and deliberately deferred.
+- Do not add in-app AI chat or activity-based carb presets without being asked — considered and deliberately deferred. (Weight/body tracking exists: `day.body` {weightKg, bodyFatPct?, muscleKg?}; weigh-ins auto-update `profile.weightKg`; Reports cross-checks scale trend vs food-math. Compete must NEVER see body data.)
 - Do not loosen Firestore rules: user data is owner-only (`request.auth.uid == uid`).
 - Do not switch the timezone handling without a plan: day keys are currently computed in Africa/Johannesburg (client uses local time; functions pin TZ).
 

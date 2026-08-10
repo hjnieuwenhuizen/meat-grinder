@@ -5,7 +5,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { todayKey } from '../lib/dates'
-import type { DayDoc, Entry, Food, GoalSnapshot, Macros, Settings, Workout } from '../types'
+import type { BodyLog, DayDoc, Entry, Food, GoalSnapshot, Macros, Settings, Workout } from '../types'
 
 export const DEFAULT_GOALS: Macros = { kcal: 2200, protein: 180, carbs: 200, fat: 70 }
 
@@ -88,6 +88,12 @@ export function useDay(uid: string, key: string, settings?: Settings | null) {
 
   const setSteps = (steps: number | null) => write({ ...loaded(), steps })
 
+  const setBody = (body: BodyLog | null) => {
+    const { body: _drop, ...rest } = loaded()
+    void _drop
+    return write(body ? { ...rest, body } : (rest as DayDoc))
+  }
+
   // extra lets callers atomically flip the training flag with the same write
   const addWorkout = (w: Workout, extra: Partial<DayDoc> = {}) =>
     write({ ...loaded(), ...extra, workouts: [...loaded().workouts, w] })
@@ -98,7 +104,7 @@ export function useDay(uid: string, key: string, settings?: Settings | null) {
   const removeWorkout = (id: string) =>
     write({ ...loaded(), workouts: loaded().workouts.filter((w) => w.id !== id) })
 
-  return { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, addWorkout, updateWorkout, removeWorkout }
+  return { day, addEntry, removeEntry, updateEntry, setTraining, setSleep, setSteps, setBody, addWorkout, updateWorkout, removeWorkout }
 }
 
 export function useFoods(uid: string) {
