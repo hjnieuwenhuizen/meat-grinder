@@ -140,14 +140,30 @@ const energyOf = (settings: Record<string, unknown>, day: DayDoc, eatenKcal: num
   }
 }
 
+// endurance fueling: 50% of logged burn above 400 kcal (cap 1000) added to
+// the goal as carbs — partial on purpose, wearable calories overestimate
+const fuelOf = (day: DayDoc, settings: Record<string, unknown>): number => {
+  if (!settings.profile) return 0
+  const ex = (day.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
+  return Math.min(1000, Math.max(0, Math.round((0.5 * (ex - 400)) / 10) * 10))
+}
+
+const fueledGoal = (day: DayDoc, settings: Record<string, unknown>): { goal: Macros | null; fuel: number } => {
+  const base = resolveGoal(day, settings)
+  const fuel = fuelOf(day, settings)
+  if (!base || !fuel) return { goal: base, fuel: 0 }
+  return { goal: { ...base, kcal: base.kcal + fuel, carbs: base.carbs + Math.round(fuel / 4 / 5) * 5 }, fuel }
+}
+
 const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>) => {
   const totals = round(totalsOf(day.entries))
-  const goal = resolveGoal(day, settings)
+  const { goal, fuel } = fueledGoal(day, settings)
   const alcohol = day.entries.filter((e) => e.alcohol)
   return {
     date,
     trainingDay: day.training,
     goal,
+    enduranceFuelKcal: fuel || null,
     energy: energyOf(settings, day, totals.kcal),
     totals,
     sleepHours: day.sleep ?? null,
@@ -381,7 +397,7 @@ const logFood = async (uid: string, input: LogFoodInput) => {
   stampGoals(day, settings as Record<string, unknown>)
   await dayRef.set(day)
 
-  const goal = resolveGoal(day, settings as Record<string, unknown>) ?? undefined
+  const goal = fueledGoal(day, settings as Record<string, unknown>).goal ?? undefined
   const totals = round(totalsOf(day.entries))
 
   return {
@@ -405,7 +421,7 @@ const logFood = async (uid: string, input: LogFoodInput) => {
 
 const budgetAfter = async (uid: string, day: DayDoc) => {
   const settings = await loadSettings(uid)
-  const goal = resolveGoal(day, settings as Record<string, unknown>) ?? undefined
+  const goal = fueledGoal(day, settings as Record<string, unknown>).goal ?? undefined
   const totals = round(totalsOf(day.entries))
   return {
     totals,

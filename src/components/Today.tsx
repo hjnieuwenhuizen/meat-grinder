@@ -8,7 +8,7 @@ import { MEALS, defaultMealNow } from '../lib/meals'
 import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
-import { energyReadout, heroBands } from '../lib/coach'
+import { energyReadout, heroBands, applyFuel } from '../lib/coach'
 import type { DayDoc, Profile } from '../types'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
@@ -52,7 +52,8 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
 
   if (!day) return <div className="py-20 text-center text-mist">Loading…</div>
 
-  const goal = goalFor(settings, day)
+  // endurance fueling: big logged burns raise today's goal (partial, as carbs)
+  const { goal, fuel } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
   const totals = totalsOf(day)
   const left = Math.round(goal.kcal - totals.kcal)
   const kcalPct = Math.min(totals.kcal / goal.kcal, 1)
@@ -159,6 +160,11 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
               </span>
               <span className="text-mist">/ {Math.round(goal.kcal)}</span>
             </div>
+            {fuel > 0 && (
+              <div className="mt-0.5 text-[11px] text-grind" title="50% of logged exercise burn above 400 kcal, added as carbs — partial on purpose: watch calories overestimate">
+                incl. +{fuel} endurance fuel 🏃
+              </div>
+            )}
           </div>
           <div className="text-right text-sm font-medium" style={{ color: kcalColor }}>
             {left < 0 ? `${-left} over` : `${left} left`}

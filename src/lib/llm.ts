@@ -4,7 +4,7 @@ import { MEALS } from './meals'
 import { workoutTitle, workoutDetails } from './workouts'
 import { totalsOf, goalFor } from '../hooks/useData'
 import { scoreDay, stepsOf, MAX_POINTS } from './score'
-import { energyReadout } from './coach'
+import { energyReadout, applyFuel } from './coach'
 import type { DayDoc, Macros, Settings } from '../types'
 
 const r = (n: number) => Math.round(n * 10) / 10
@@ -12,7 +12,7 @@ const line = (t: Macros) =>
   `${Math.round(t.kcal)} kcal | P ${r(t.protein)}g | C ${r(t.carbs)}g | F ${r(t.fat)}g`
 
 export function dayReport(key: string, day: DayDoc, settings: Settings): string {
-  const goal = goalFor(settings, day)
+  const { goal, fuel } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
   const totals = totalsOf(day)
   const tag = settings.trainingEnabled ? (day.training ? ' — Training day' : ' — Rest day') : ''
 
@@ -48,7 +48,7 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
 
   return [
     `# Meat Grinder — Daily log — ${fmtLong(key)}${tag}`,
-    `Goal: ${line(goal)}`,
+    `Goal: ${line(goal)}${fuel > 0 ? ` (incl. +${fuel} kcal endurance fuel — 50% of logged burn above 400, as carbs)` : ''}`,
     `Eaten: ${line(totals)}`,
     `Remaining: ${line({
       kcal: goal.kcal - totals.kcal,
@@ -93,7 +93,7 @@ export function rangeReport(
   const rows = keys.flatMap((k) => {
     const day = daysByKey[k]
     if (!day?.entries?.length) return [`- ${fmtDay(k)} (${k}): no entries`]
-    const goal = goalFor(settings, day)
+    const { goal, fuel } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
     const t = totalsOf(day)
     const tag = settings.trainingEnabled && day.training ? ' [training]' : ''
     const trained = day.workouts?.length
@@ -110,7 +110,7 @@ export function rangeReport(
     const grams = drinks.reduce((s, e) => s + (e.alcoholG || 0), 0)
     const booze = shame > 0 ? ` | alcohol ${Math.round(shame)} kcal${grams > 0 ? ` (${Math.round(grams)}g)` : ''}` : ''
     return [
-      `- ${fmtDay(k)} (${k})${tag}: ${line(t)} (goal ${Math.round(goal.kcal)} kcal)${trained}${sleep}${wellness}${booze}`,
+      `- ${fmtDay(k)} (${k})${tag}: ${line(t)} (goal ${Math.round(goal.kcal)} kcal${fuel > 0 ? ` incl. ${fuel} fuel` : ''})${trained}${sleep}${wellness}${booze}`,
       ...day.entries.map((e) => `  - ${e.alcohol ? '[Alcohol] ' : ''}${e.name}${fmtAmount(e) ? ` (${fmtAmount(e)})` : ''}: ${line(e)}`),
     ]
   })

@@ -1,7 +1,7 @@
 // Smart goal setup: a short interview → science-backed macros.
 // BMR (Mifflin-St Jeor) × lifestyle → target rate → diet-style macro split.
 import { useState } from 'react'
-import { ACTIVITIES, DIETS, GOAL_RATES, buildPlan, restTdee, kgPerWeek, KCAL_PER_KG } from '../lib/coach'
+import { ACTIVITIES, DIETS, GOAL_RATES, PROTEIN_CHOICES, recommendedProtein, buildPlan, planCheck, restTdee, bmr, KCAL_PER_KG } from '../lib/coach'
 import { Modal, Field } from './ui'
 import type { ActivityId, DietId, Profile, Settings } from '../types'
 
@@ -20,6 +20,7 @@ export default function GoalWizard({ initial, onSave, onClose }: {
   const [activity, setActivity] = useState<ActivityId>(initial?.activity ?? 'light')
   const [trainingDays, setTrainingDays] = useState(initial?.trainingDays ?? 4)
   const [diet, setDiet] = useState<DietId>(initial?.diet ?? 'balanced')
+  const [proteinPerKg, setProteinPerKg] = useState(initial?.proteinPerKg ?? 2.0)
   const [goalRate, setGoalRate] = useState(initial?.goalRate ?? -0.5)
 
   const profile: Profile | null =
@@ -31,6 +32,7 @@ export default function GoalWizard({ initial, onSave, onClose }: {
           weightKg: Number(weightKg),
           activity,
           diet,
+          proteinPerKg,
           goalRate,
           trainingDays,
         }
@@ -127,9 +129,29 @@ export default function GoalWizard({ initial, onSave, onClose }: {
             {DIETS.map((d) => (
               <button key={d.id} type="button" onClick={() => setDiet(d.id)} className={`block w-full ${chip(diet === d.id)}`}>
                 <div className="text-sm font-medium">{d.icon} {d.label}</div>
-                <div className="text-xs text-mist">{d.blurb} · {d.proteinPerKg}g protein/kg</div>
+                <div className="text-xs text-mist">{d.blurb}</div>
               </button>
             ))}
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-mist">Protein target — separate from diet style</div>
+            <div className="flex gap-1.5">
+              {PROTEIN_CHOICES.map((g) => (
+                <button
+                  key={g} type="button" onClick={() => setProteinPerKg(g)}
+                  className={`flex-1 rounded-xl border p-2 text-center transition ${
+                    proteinPerKg === g ? 'border-grind/60 bg-grind-soft' : 'border-edge bg-ink hover:border-grind/30'
+                  }`}
+                >
+                  <div className="text-sm font-medium tabular-nums">{g} g/kg</div>
+                  <div className="text-[10px] text-mist">
+                    {weightKg ? `${Math.round(g * Number(weightKg))}g` : ''}
+                    {g === recommendedProtein(goalRate) ? ' · recommended' : ''}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[11px] text-mist">Cutting? Higher protein (2.0–2.2) protects muscle. A high-carb cutter can want 2.2 too.</p>
           </div>
           <button type="button" onClick={() => setStep(3)} className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110">
             Next
@@ -145,21 +167,30 @@ export default function GoalWizard({ initial, onSave, onClose }: {
             </p>
           )}
           <div className="space-y-1.5">
-            {GOAL_RATES.map((g) => (
-              <button key={g.rate} type="button" onClick={() => setGoalRate(g.rate)} className={`flex w-full items-center justify-between ${chip(goalRate === g.rate)}`}>
-                <span>
-                  <span className="block text-sm font-medium">{g.label}</span>
-                  <span className="block text-xs text-mist">{g.blurb}</span>
-                </span>
-                <span className="text-xs tabular-nums text-mist">{g.rate > 0 ? '+' : ''}{Math.round((g.rate * KCAL_PER_KG) / 7)} kcal/d</span>
-              </button>
-            ))}
+            {GOAL_RATES.map((g) => {
+              const pctBw = weightKg ? Math.round((Math.abs(g.rate) / Number(weightKg)) * 1000) / 10 : null
+              const fast = g.rate < 0 && pctBw !== null && pctBw > 0.85
+              return (
+                <button key={g.rate} type="button" onClick={() => setGoalRate(g.rate)} className={`flex w-full items-center justify-between ${chip(goalRate === g.rate)}`}>
+                  <span>
+                    <span className="block text-sm font-medium">{g.label}{fast ? ' ⚠️' : ''}</span>
+                    <span className="block text-xs text-mist">{g.blurb}{pctBw ? ` · ${pctBw}% BW/week` : ''}</span>
+                  </span>
+                  <span className="text-xs tabular-nums text-mist">{g.rate > 0 ? '+' : ''}{Math.round((g.rate * KCAL_PER_KG) / 7)} kcal/d</span>
+                </button>
+              )
+            })}
           </div>
-          {goalRate <= -1 && (
-            <p className="rounded-lg border border-over/40 bg-over/10 p-2 text-[11px] text-over">
-              −1 kg/week is a big deficit. Protein and training matter double here — run it in short blocks, not months.
-            </p>
-          )}
+          {profile && youValid && (() => {
+            const c = planCheck(profile)
+            if (!c.tooFast && !c.clampedAtBmr) return null
+            return (
+              <p className="rounded-lg border border-over/40 bg-over/10 p-2 text-[11px] text-over">
+                {c.tooFast && <>That's {c.ratePctBw}% of bodyweight/week — beyond the muscle-safe band of 0.4–0.7%. Fine for a short block; not a lifestyle. </>}
+                {c.clampedAtBmr && <>This pace would put you below your BMR ({Math.round(bmr(profile))} kcal), so the plan is floored there — the real rate will be slower than requested. Pick a gentler pace for honest numbers.</>}
+              </p>
+            )
+          })()}
 
           {plan && (
             <div className="rounded-xl border border-grind/40 bg-grind-soft/30 p-3 text-sm">
@@ -173,7 +204,7 @@ export default function GoalWizard({ initial, onSave, onClose }: {
                 </div>
               )}
               <div className="mt-1 text-xs text-mist">
-                ≈ {kgPerWeek((goalRate * KCAL_PER_KG) / 7) > 0 ? '+' : ''}{goalRate} kg/week · you can retune any time — past days keep the goals they were logged under
+                ≈ {goalRate > 0 ? '+' : ''}{goalRate} kg/week ({profile ? planCheck(profile).ratePctBw : 0}% BW) · deficit capped at your BMR · retune any time — past days keep the goals they were logged under
               </div>
             </div>
           )}

@@ -28,9 +28,10 @@ firebase deploy --only firestore:rules
 
 ## Product rules — do not violate
 
+0. **Protein is decoupled from diet style.** `profile.proteinPerKg` is its own dial (1.6–2.2); diet templates only govern the carb/fat split. Cut plans are guard-railed: rate shown as % bodyweight/week (safe band 0.4–0.7%), calories floored at BMR (`planCheck`/`buildPlan`).
 1. **Protein is a hard target; carbs/fat are flexible.** Never flag carbs or fat red on their own line — only when total calories blow the budget (>+5%). Protein over target is a win (green), never red.
 2. **Calories govern the day** via a ±10% band: amber under 90%, green 90–110%, red above 110%.
-3. **Exercise burn is never added back to the calorie budget.** Workout kcal is informational only. No eat-back calories, ever.
+3. **Exercise burn is never credited 1:1.** Wearable calories overestimate, so there is no blind eat-back. The ONE sanctioned mechanism is the endurance fueling layer (`applyFuel` in `src/lib/coach.ts`, mirrored in `functions/src/mcp.ts`): 50% of a day's logged burn **above 400 kcal**, capped at +1000, added to that day's goal **as carbs** and always labelled ("endurance fuel"). Requires a profile. Never widen the fraction or bypass the threshold; the energy-zone display stays a separate, informational layer.
 4. **Alcohol shows in red with 🍺, no softening.** It counts toward calories and totals.
 5. **Sync never overwrites manual input** (e.g. Garmin sleep only fills empty days; workouts dedupe by `garminId`).
 6. **Every feature must be represented in the Copy-for-LLM output** (`src/lib/llm.ts`) **and the MCP/Actions payloads** (`functions/src/mcp.ts`). If you add data, add it to the reports and the API.

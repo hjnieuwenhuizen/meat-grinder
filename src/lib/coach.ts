@@ -53,9 +53,18 @@ export const restTdee = (p: Profile): number =>
 const round5 = (n: number) => Math.max(0, Math.round(n / 5) * 5)
 const round10 = (n: number) => Math.max(0, Math.round(n / 10) * 10)
 
+// protein is its own dial — requirement and carb preference are separate
+// concepts (a high-carb cutter can want 2.2 g/kg too)
+export const PROTEIN_CHOICES = [1.6, 1.8, 2.0, 2.2]
+export const recommendedProtein = (goalRate: number): number =>
+  goalRate < 0 ? 2.2 : goalRate > 0 ? 1.8 : 2.0
+
+const proteinPerKgOf = (p: Profile): number =>
+  p.proteinPerKg ?? DIETS.find((d) => d.id === p.diet)?.proteinPerKg ?? 1.8
+
 const macrosFor = (p: Profile, kcal: number, extraCarbsKcal = 0): Macros => {
   const diet = DIETS.find((d) => d.id === p.diet) ?? DIETS[3]
-  const protein = p.weightKg * diet.proteinPerKg
+  const protein = p.weightKg * proteinPerKgOf(p)
   const proteinKcal = protein * 4
 
   let carbsG: number
@@ -74,9 +83,25 @@ const macrosFor = (p: Profile, kcal: number, extraCarbsKcal = 0): Macros => {
   return { kcal: round10(kcal), protein: round5(protein), carbs: round5(carbsG), fat: round5(fatG) }
 }
 
+/** guardrails: rate as % bodyweight/week and a hard BMR floor —
+ *  the muscle-safe cutting band is ~0.4–0.7% BW/week */
+export const planCheck = (p: Profile) => {
+  const tdee = restTdee(p)
+  const raw = tdee + (p.goalRate * KCAL_PER_KG) / 7
+  const floor = bmr(p)
+  const ratePctBw = Math.round((Math.abs(p.goalRate) / p.weightKg) * 1000) / 10
+  return {
+    clampedAtBmr: raw < floor,
+    ratePctBw,
+    tooFast: p.goalRate < 0 && ratePctBw > 0.85,
+    deficitPctTdee: p.goalRate < 0 ? Math.round(((tdee - Math.max(raw, floor)) / tdee) * 100) : 0,
+  }
+}
+
 /** the full plan the wizard writes into Settings */
 export const buildPlan = (p: Profile): GoalSnapshot => {
-  const restKcal = restTdee(p) + (p.goalRate * KCAL_PER_KG) / 7
+  // never plan below BMR, whatever pace was requested
+  const restKcal = Math.max(bmr(p), restTdee(p) + (p.goalRate * KCAL_PER_KG) / 7)
   // training days earn a modest bump; carb-tolerant diets put it in carbs,
   // keto/carnivore put it in fat
   const bump = 300
@@ -84,7 +109,7 @@ export const buildPlan = (p: Profile): GoalSnapshot => {
   const carbDiet = !['carnivore', 'keto'].includes(p.diet)
   const training = carbDiet
     ? macrosFor(p, restKcal + bump, bump)
-    : { ...macrosFor(p, restKcal), kcal: round10(restKcal + bump), fat: round5(macrosFor(p, restKcal).fat + bump / 9) }
+    : { ...rest, kcal: round10(restKcal + bump), fat: round5(rest.fat + bump / 9) }
 
   return {
     trainingEnabled: (p.trainingDays ?? 0) > 0,
@@ -155,4 +180,34 @@ export const energyReadout = (
   const maintenance = Math.round(restTdee(p) + exerciseKcal)
   const delta = Math.round(eatenKcal - maintenance)
   return { maintenance, exerciseKcal, eaten: Math.round(eatenKcal), delta, zone: zoneFor(delta), kgWeek: kgPerWeek(delta) }
+}
+
+/* ---------- endurance fueling layer ----------
+ * A fixed training-day goal is fine for a gym session; it is nonsense for an
+ * 18 km run. When a day's LOGGED exercise burn is large, the goal itself
+ * earns a fuel bonus: 50% of the burn above 400 kcal, capped at +1000,
+ * given as carbohydrate. Deliberately partial — wearable calories
+ * overestimate, so we never credit them 1:1. */
+export const FUEL_THRESHOLD = 400
+export const FUEL_FRACTION = 0.5
+export const FUEL_CAP = 1000
+
+export const fuelBonusKcal = (day: Pick<DayDoc, 'workouts'> | null | undefined): number => {
+  const ex = (day?.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
+  return Math.min(FUEL_CAP, Math.max(0, Math.round((FUEL_FRACTION * (ex - FUEL_THRESHOLD)) / 10) * 10))
+}
+
+/** goal + endurance fuel (carbs). Enabled only when a profile exists. */
+export const applyFuel = (
+  goal: Macros,
+  day: Pick<DayDoc, 'workouts'> | null | undefined,
+  enabled: boolean,
+): { goal: Macros; fuel: number } => {
+  if (!enabled) return { goal, fuel: 0 }
+  const fuel = fuelBonusKcal(day)
+  if (!fuel) return { goal, fuel: 0 }
+  return {
+    goal: { ...goal, kcal: goal.kcal + fuel, carbs: goal.carbs + Math.round(fuel / 4 / 5) * 5 },
+    fuel,
+  }
 }

@@ -1,6 +1,7 @@
 // Daily score for the family leaderboard. Percent-of-own-goal, so different
 // goals compete fairly. Pure — no Firestore here.
 import { totalsOf, goalFor } from '../hooks/useData'
+import { applyFuel } from './coach'
 import type { ChallengeMetric, DayDoc, ScoreBreakdown, ScoreDoc, Settings } from '../types'
 
 export const STEP_GOAL = 7000
@@ -25,7 +26,7 @@ export const SCORE_ITEMS: { key: keyof ScoreBreakdown; emoji: string; label: str
 export const MAX_POINTS = SCORE_ITEMS.reduce((s, i) => s + i.max, 0)
 
 export function scoreDay(day: DayDoc, settings: Settings): { points: number; steps: number; km: number; breakdown: ScoreBreakdown } {
-  const goal = goalFor(settings, day)
+  const { goal } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
   const totals = totalsOf(day)
   const logged = day.entries.length > 0
   const steps = stepsOf(day)

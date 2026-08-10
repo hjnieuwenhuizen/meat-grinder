@@ -29,6 +29,8 @@ export interface Profile {
   /** target rate in kg per week: negative = lose, 0 = maintain, positive = gain */
   goalRate: number
   trainingDays?: number
+  /** protein target in g/kg — independent of diet style */
+  proteinPerKg?: number
 }
 
 export interface Settings {

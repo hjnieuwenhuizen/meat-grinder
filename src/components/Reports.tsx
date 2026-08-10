@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { fmtAmount } from '../lib/units'
 import { stepsOf } from '../lib/score'
-import { energyReadout, KCAL_PER_KG } from '../lib/coach'
+import { energyReadout, applyFuel, KCAL_PER_KG } from '../lib/coach'
 import type { Profile } from '../types'
 import { workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
 import { fetchDays, totalsOf, goalFor } from '../hooks/useData'
@@ -87,7 +87,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
   const hitsOf = (k: string): { protein: boolean; kcal: boolean } | null => {
     const day = days?.[k]
     if (!day?.entries?.length) return null
-    const g = goalFor(settings, day)
+    const { goal: g } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
     const t = totalsOf(day)
     return {
       protein: t.protein >= g.protein * 0.95,
@@ -227,7 +227,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
               {keys.map((k) => {
                 const day = days[k]
                 const t = totalsOf(day)
-                const g = goalFor(settings, day)
+                const { goal: g } = applyFuel(goalFor(settings, day), day, Boolean(settings.profile))
                 const h = t.kcal > 0 ? Math.max((t.kcal / maxKcal) * 100, 3) : 0
                 const off = t.kcal > 0 && (t.kcal < g.kcal * 0.9 || t.kcal > g.kcal * 1.1)
                 const future = k > todayKey()
