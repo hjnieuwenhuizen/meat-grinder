@@ -168,11 +168,22 @@ async function syncUser(uid: string, full = false): Promise<string> {
   }
 
   // daily wellness: steps + resting heart rate for yesterday/today
+  let profileName: string | null = null
   for (const key of sleepKeys) {
     const date = new Date(`${key}T12:00:00`)
     const g: { steps?: number | null; restingHr?: number | null } = {}
     try {
-      const steps = await client.getSteps(date)
+      let steps = await client.getSteps(date)
+      if (!steps || steps <= 0) {
+        // the daily-steps REPORT lags until the watch does a full sync; the
+        // live user summary is the number the Garmin app itself displays
+        profileName ??= (await client.getUserProfile()).displayName
+        const sum = await client.client.get<{ totalSteps?: number }>(
+          `https://connectapi.garmin.com/usersummary-service/usersummary/daily/${profileName}?calendarDate=${key}`,
+        )
+        steps = sum?.totalSteps ?? 0
+        logger.info(`${uid} steps ${key}: report=0, live summary=${steps}`)
+      }
       if (steps && steps > 0) g.steps = steps
     } catch (e) {
       logger.info(`${uid} no steps for ${key}: ${(e as Error).message}`)
