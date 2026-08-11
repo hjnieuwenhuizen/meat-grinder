@@ -98,6 +98,22 @@ export default function GoalWizard({ initial, onSave, onClose }: {
             <Field label="Weight (kg)" type="number" inputMode="decimal" value={weightKg} onChange={(e) => setWeightKg(e.target.value)} placeholder="85" />
           </div>
           <p className="text-[11px] text-mist">Used only to calculate your calorie burn (Mifflin-St Jeor) — stays in your account.</p>
+          {(() => {
+            // pounds typed into the kg box is the classic silent killer here
+            const w = Number(weightKg)
+            const h = Number(heightCm)
+            if (!w || !h || h < 100) return null
+            const bmi = w / (h / 100) ** 2
+            if (bmi < 15 || bmi > 42)
+              return (
+                <p className="rounded-lg border border-over/40 bg-over/10 p-2 text-[11px] text-over">
+                  Double-check: {w} kg at {h} cm is a BMI of {Math.round(bmi)}. Weight must be in{' '}
+                  <b>kilograms</b> — {w} lb would be {Math.round(w / 2.2046)} kg. Everything (calories,
+                  protein) is calculated from this number.
+                </p>
+              )
+            return null
+          })()}
           <button
             type="button" disabled={!youValid}
             onClick={() => setStep(1)}
