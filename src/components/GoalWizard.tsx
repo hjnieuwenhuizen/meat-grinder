@@ -1,7 +1,7 @@
 // Smart goal setup: a short interview → science-backed macros.
 // BMR (Mifflin-St Jeor) × lifestyle → target rate → diet-style macro split.
 import { useState } from 'react'
-import { ACTIVITIES, DIETS, GOAL_RATES, PROTEIN_CHOICES, recommendedProtein, buildPlan, planCheck, restTdee, bmr, KCAL_PER_KG } from '../lib/coach'
+import { ACTIVITIES, DIETS, GOAL_RATES, PROTEIN_CHOICES, recommendedProtein, buildPlan, planCheck, restTdee, bmr, refWeightKg, KCAL_PER_KG } from '../lib/coach'
 import { Modal, Field } from './ui'
 import type { ActivityId, DietId, Profile, Settings } from '../types'
 
@@ -106,10 +106,10 @@ export default function GoalWizard({ initial, onSave, onClose }: {
             const bmi = w / (h / 100) ** 2
             if (bmi < 15 || bmi > 42)
               return (
-                <p className="rounded-lg border border-over/40 bg-over/10 p-2 text-[11px] text-over">
-                  Double-check: {w} kg at {h} cm is a BMI of {Math.round(bmi)}. Weight must be in{' '}
-                  <b>kilograms</b> — {w} lb would be {Math.round(w / 2.2046)} kg. Everything (calories,
-                  protein) is calculated from this number.
+                <p className="rounded-lg border border-carbs/40 bg-carbs/10 p-2 text-[11px] text-carbs">
+                  Just checking: {w} kg at {h} cm (BMI ≈ {Math.round(bmi)}). If that's right, carry on —
+                  protein and fat scale from adjusted bodyweight so targets stay realistic. If you meant
+                  pounds: {w} lb = {Math.round(w / 2.2046)} kg.
                 </p>
               )
             return null
@@ -172,13 +172,18 @@ export default function GoalWizard({ initial, onSave, onClose }: {
                 >
                   <div className="text-sm font-medium tabular-nums">{g} g/kg</div>
                   <div className="text-[10px] text-mist">
-                    {weightKg ? `${Math.round(g * Number(weightKg))}g` : ''}
+                    {weightKg && heightCm ? `${Math.round(g * refWeightKg({ weightKg: Number(weightKg), heightCm: Number(heightCm) }))}g` : ''}
                     {g === recommendedProtein(goalRate) ? ' · recommended' : ''}
                   </div>
                 </button>
               ))}
             </div>
-            <p className="mt-1 text-[11px] text-mist">Cutting? Higher protein (2.0–2.2) protects muscle. A high-carb cutter can want 2.2 too.</p>
+            <p className="mt-1 text-[11px] text-mist">
+              Cutting? Higher protein (2.0–2.2) protects muscle. A high-carb cutter can want 2.2 too.
+              {weightKg && heightCm && refWeightKg({ weightKg: Number(weightKg), heightCm: Number(heightCm) }) < Number(weightKg) && (
+                <> Gram targets use <b className="text-bone">adjusted bodyweight</b> ({refWeightKg({ weightKg: Number(weightKg), heightCm: Number(heightCm) })} kg) — per-kg-of-actual-weight over-prescribes at higher BMI.</>
+              )}
+            </p>
           </div>
           <button type="button" onClick={() => setStep(3)} className="w-full rounded-full bg-grind py-2.5 text-sm font-semibold text-ink transition hover:brightness-110">
             Next

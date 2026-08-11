@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import GoalWizard from './GoalWizard'
-import { ACTIVITIES, DIETS, GOAL_RATES, planCheck } from '../lib/coach'
+import { ACTIVITIES, DIETS, GOAL_RATES, planCheck, refWeightKg } from '../lib/coach'
 import { useGarmin } from '../hooks/useGarmin'
 import { useHealth } from '../hooks/useHealth'
 import { useMcp } from '../hooks/useMcp'
@@ -157,8 +157,10 @@ function PlanCard({ settings, profile, onRetune, onManual }: {
           </div>
 
           <p className="text-[11px] leading-snug text-mist">
-            Protein {profile.proteinPerKg ?? diet?.proteinPerKg} g/kg · estimates, not gospel — your weight trend
-            in Reports is the real judge. Retune any time; past days keep the goals they were logged under.
+            Protein {profile.proteinPerKg ?? diet?.proteinPerKg} g/kg
+            {refWeightKg(profile) < profile.weightKg ? ` of adjusted bodyweight (${refWeightKg(profile)} kg)` : ''} · estimates,
+            not gospel — your weight trend in Reports is the real judge. Retune any time; past days keep
+            the goals they were logged under.
           </p>
         </div>
       </Panel>

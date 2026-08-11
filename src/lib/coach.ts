@@ -63,9 +63,18 @@ export const recommendedProtein = (goalRate: number): number =>
 const proteinPerKgOf = (p: Profile): number =>
   p.proteinPerKg ?? DIETS.find((d) => d.id === p.diet)?.proteinPerKg ?? 1.8
 
+/** Protein / fat-floor reference weight. At high BMI, per-kg-of-actual-weight
+ *  prescribes absurd targets (2.2 g/kg × 127 kg = 280 g protein). Standard
+ *  clinical fix: adjusted bodyweight = ideal (BMI 25) + 40% of the excess,
+ *  applied once BMI passes ~30. Calorie burn (BMR) still uses actual weight. */
+export const refWeightKg = (p: Pick<Profile, 'weightKg' | 'heightCm'>): number => {
+  const ideal = 25 * (p.heightCm / 100) ** 2
+  return p.weightKg > ideal * 1.2 ? Math.round(ideal + 0.4 * (p.weightKg - ideal)) : p.weightKg
+}
+
 const macrosFor = (p: Profile, kcal: number, extraCarbsKcal = 0): Macros => {
   const diet = DIETS.find((d) => d.id === p.diet) ?? DIETS[3]
-  const protein = p.weightKg * proteinPerKgOf(p)
+  const protein = refWeightKg(p) * proteinPerKgOf(p)
   const proteinKcal = protein * 4
 
   let carbsG: number
@@ -74,7 +83,7 @@ const macrosFor = (p: Profile, kcal: number, extraCarbsKcal = 0): Macros => {
   else carbsG = ((kcal - extraCarbsKcal) * diet.carbs + extraCarbsKcal) / 4
 
   let fatG = (kcal - proteinKcal - carbsG * 4) / 9
-  const fatFloor = p.weightKg * 0.7
+  const fatFloor = refWeightKg(p) * 0.7
   if (fatG < fatFloor && typeof diet.carbs === 'number') {
     // protect the fat floor by taking energy back from carbs
     fatG = fatFloor
