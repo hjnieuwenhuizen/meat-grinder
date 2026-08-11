@@ -187,7 +187,8 @@ function PhoneHealthPanel({ uid }: { uid: string }) {
       </div>
       <p className="mb-4 text-xs text-mist">
         Reads your daily steps from Health Connect (Samsung Health, Google Fit, etc.) on this phone —
-        no watch account needed. Steps sync automatically while you use the app.
+        no watch account needed. Steps sync automatically while you use the app. Counts can trail the
+        Samsung Health screen by a few minutes — it exports to Health Connect periodically.
       </p>
       {h.enabled ? (
         <div className="flex gap-2">
