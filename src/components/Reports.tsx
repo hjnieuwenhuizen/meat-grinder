@@ -229,7 +229,11 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                 const t = totalsOf(day)
                 const { goal: g } = applyFuel(goalFor(settings, day), day, settings.profile)
                 const h = t.kcal > 0 ? Math.max((t.kcal / maxKcal) * 100, 3) : 0
-                const off = t.kcal > 0 && (t.kcal < g.kcal * 0.9 || t.kcal > g.kcal * 1.1)
+                // same semantics as the diary: green inside the ±10% band,
+                // amber outside it, red ONLY on a true surplus (above burn)
+                const ratio = g.kcal > 0 ? t.kcal / g.kcal : 0
+                const r = settings.profile ? energyReadout(settings.profile, day, t.kcal) : null
+                const surplus = t.kcal > 0 && (r ? t.kcal > r.maintenance : ratio > 1.1)
                 const future = k > todayKey()
                 return (
                   <div key={k} className="group relative flex flex-1 flex-col justify-end self-stretch">
@@ -237,7 +241,9 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                       className="rounded-t-sm transition-all"
                       style={{
                         height: `${h}%`,
-                        background: t.kcal > g.kcal ? 'var(--color-over)' : off ? 'var(--color-carbs)' : 'var(--color-grind)',
+                        background: surplus ? 'var(--color-over)'
+                          : ratio >= 0.9 && ratio <= 1.1 ? 'var(--color-grind)'
+                          : 'var(--color-carbs)',
                         opacity: future ? 0.15 : 1,
                       }}
                     />
@@ -258,8 +264,8 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
             )}
             <div className="mt-3 flex gap-4 text-[10px] text-mist">
               <Legend color="var(--color-grind)" label="on target" />
-              <Legend color="var(--color-carbs)" label="under" />
-              <Legend color="var(--color-over)" label="over" />
+              <Legend color="var(--color-carbs)" label="off target" />
+              <Legend color="var(--color-over)" label="surplus (above burn)" />
             </div>
           </Panel>
           </div>
