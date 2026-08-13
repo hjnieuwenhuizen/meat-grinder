@@ -390,14 +390,22 @@ function EnergyBalance({ profile, keys, days }: {
           }
           const h = Math.min(50, (Math.abs(r.delta) / maxAbs) * 50)
           const up = r.delta > 0
+          // one rule, same as the diary: red = surplus, green = deficit
+          // (that's the plan working), amber = hovering at maintenance or an
+          // extreme >1000 under-fuel that deserves attention, not applause
+          const color =
+            r.delta > 150 ? 'var(--color-over)'
+            : r.delta > -100 ? 'var(--color-carbs)'
+            : r.delta <= -1000 ? 'var(--color-carbs)'
+            : 'var(--color-grind)'
           return (
             <div key={k} className="group relative flex flex-1 flex-col self-stretch" title={`${fmtDay(k)}: ${r.delta > 0 ? '+' : ''}${r.delta} kcal (${r.zone.label})`}>
               <div className="flex flex-1 flex-col justify-end">
-                {up && <div className="rounded-t-sm" style={{ height: `${h}%`, background: r.zone.color }} />}
+                {up && <div className="rounded-t-sm" style={{ height: `${h}%`, background: color }} />}
               </div>
               <div className="h-px bg-mist/40" />
               <div className="flex flex-1 flex-col justify-start">
-                {!up && <div className="rounded-b-sm" style={{ height: `${h}%`, background: r.zone.color }} />}
+                {!up && <div className="rounded-b-sm" style={{ height: `${h}%`, background: color }} />}
               </div>
             </div>
           )
