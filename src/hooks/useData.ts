@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  collection, doc, onSnapshot, setDoc, deleteDoc, updateDoc,
+  collection, doc, onSnapshot, getDoc, setDoc, deleteDoc, updateDoc,
   query, orderBy, documentId, startAt, endAt, getDocs,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
@@ -19,7 +19,27 @@ const EMPTY_DAY: DayDoc = { training: false, entries: [], workouts: [] }
 
 const settingsRef = (uid: string) => doc(db, 'users', uid, 'meta', 'settings')
 const dayRef = (uid: string, key: string) => doc(db, 'users', uid, 'days', key)
-const foodsCol = (uid: string) => collection(db, 'users', uid, 'foods')
+// the library is SHARED: one global collection for every user. Personal
+// users/{uid}/foods is the legacy lane — published into the shared library
+// once, then left in place (never deleted; migration rules).
+const foodsCol = () => collection(db, 'foods')
+const legacyFoodsCol = (uid: string) => collection(db, 'users', uid, 'foods')
+const libraryFlagRef = (uid: string) => doc(db, 'users', uid, 'meta', 'library')
+
+async function publishLegacyLibrary(uid: string) {
+  const flag = await getDoc(libraryFlagRef(uid))
+  if (flag.exists()) return
+  const [foods, recipes] = await Promise.all([
+    getDocs(legacyFoodsCol(uid)),
+    getDocs(collection(db, 'users', uid, 'recipes')),
+  ])
+  // same doc ids → idempotent, re-running can never duplicate
+  await Promise.all([
+    ...foods.docs.map((d) => setDoc(doc(db, 'foods', d.id), d.data(), { merge: true })),
+    ...recipes.docs.map((d) => setDoc(doc(db, 'recipes', d.id), d.data(), { merge: true })),
+  ])
+  await setDoc(libraryFlagRef(uid), { publishedAt: Date.now(), foods: foods.size, recipes: recipes.size })
+}
 
 export const snapshotOf = (s: Settings): GoalSnapshot => ({
   trainingEnabled: s.trainingEnabled,
@@ -111,14 +131,15 @@ export function useFoods(uid: string) {
   const [foods, setFoods] = useState<Food[]>([])
 
   useEffect(() => {
-    return onSnapshot(query(foodsCol(uid), orderBy('name')), (snap) => {
+    void publishLegacyLibrary(uid).catch(() => {})
+    return onSnapshot(query(foodsCol(), orderBy('name')), (snap) => {
       setFoods(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Food))
     })
   }, [uid])
 
-  const addFood = (food: Omit<Food, 'id'>) => setDoc(doc(foodsCol(uid)), food)
-  const updateFood = (id: string, food: Partial<Food>) => updateDoc(doc(foodsCol(uid), id), food)
-  const deleteFood = (id: string) => deleteDoc(doc(foodsCol(uid), id))
+  const addFood = (food: Omit<Food, 'id'>) => setDoc(doc(foodsCol()), food)
+  const updateFood = (id: string, food: Partial<Food>) => updateDoc(doc(foodsCol(), id), food)
+  const deleteFood = (id: string) => deleteDoc(doc(foodsCol(), id))
 
   return { foods, addFood, updateFood, deleteFood }
 }

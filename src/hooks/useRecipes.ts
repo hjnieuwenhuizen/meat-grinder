@@ -6,7 +6,9 @@ import { defaultMealNow } from '../lib/meals'
 import { snapshotOf } from './useData'
 import type { DayDoc, Entry, Macros, Recipe, Settings } from '../types'
 
-const recipesCol = (uid: string) => collection(db, 'users', uid, 'recipes')
+// shared library — same collection for every user (legacy personal recipes
+// are published into it once by publishLegacyLibrary in useData)
+const recipesCol = (_uid: string) => collection(db, 'recipes')
 
 export function useRecipes(uid: string) {
   const [recipes, setRecipes] = useState<Recipe[]>([])

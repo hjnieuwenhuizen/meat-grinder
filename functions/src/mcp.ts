@@ -255,7 +255,14 @@ const rangePayload = async (uid: string, start: string, end: string) => {
 }
 
 const foodsPayload = async (uid: string, query: string) => {
-  const snap = await db.collection(`users/${uid}/foods`).orderBy('name').get()
+  // shared library first; legacy personal foods merged in for accounts that
+  // haven't opened the app since the library went global
+  const [shared, legacy] = await Promise.all([
+    db.collection('foods').orderBy('name').get(),
+    db.collection(`users/${uid}/foods`).orderBy('name').get(),
+  ])
+  const seen = new Set(shared.docs.map((d) => d.id))
+  const snap = { docs: [...shared.docs, ...legacy.docs.filter((d) => !seen.has(d.id))] }
   const q = query.toLowerCase()
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
@@ -295,13 +302,14 @@ const sanitizeFood = (input: Record<string, unknown>, partial = false) => {
 
 const foodCreate = async (uid: string, input: Record<string, unknown>) => {
   const food = sanitizeFood(input)
-  const ref = db.collection(`users/${uid}/foods`).doc()
+  const ref = db.collection('foods').doc()
   await ref.set(food)
   return { ok: true, id: ref.id, food }
 }
 
 const foodUpdate = async (uid: string, id: string, input: Record<string, unknown>) => {
-  const ref = db.doc(`users/${uid}/foods/${id}`)
+  let ref = db.doc(`foods/${id}`)
+  if (!(await ref.get()).exists && (await db.doc(`users/${uid}/foods/${id}`).get()).exists) ref = db.doc(`users/${uid}/foods/${id}`)
   if (!(await ref.get()).exists) throw new Error(`No food with id ${id}`)
   const changes = sanitizeFood(input, true)
   if (!Object.keys(changes).length) throw new Error('No valid fields to update')
@@ -354,7 +362,8 @@ const logFood = async (uid: string, input: LogFoodInput) => {
 
   if (input.foodId) {
     // stored library food: scale macros by amount in the food's own basis
-    const snap = await db.doc(`users/${uid}/foods/${input.foodId}`).get()
+    let snap = await db.doc(`foods/${input.foodId}`).get()
+    if (!snap.exists) snap = await db.doc(`users/${uid}/foods/${input.foodId}`).get()
     if (!snap.exists) throw new Error(`No library food with id ${input.foodId} — use searchFoods first`)
     const food = snap.data() as {
       name: string; unit?: string; serving?: number | null
@@ -598,7 +607,12 @@ const recipeTotals = (sections: RecipeSection[]): Macros =>
   )
 
 const recipesPayload = async (uid: string, q: string) => {
-  const snap = await db.collection(`users/${uid}/recipes`).orderBy('name').get()
+  const [shared, legacy] = await Promise.all([
+    db.collection('recipes').orderBy('name').get(),
+    db.collection(`users/${uid}/recipes`).orderBy('name').get(),
+  ])
+  const seen = new Set(shared.docs.map((d) => d.id))
+  const snap = { docs: [...shared.docs, ...legacy.docs.filter((d) => !seen.has(d.id))] }
   return snap.docs
     .map((d) => {
       const r = d.data() as { name: string; emoji?: string | null; portions: number; sections: RecipeSection[] }
@@ -623,20 +637,22 @@ const recipesPayload = async (uid: string, q: string) => {
 }
 
 const recipeGet = async (uid: string, id: string) => {
-  const snap = await db.doc(`users/${uid}/recipes/${id}`).get()
+  let snap = await db.doc(`recipes/${id}`).get()
+  if (!snap.exists) snap = await db.doc(`users/${uid}/recipes/${id}`).get()
   if (!snap.exists) throw new Error(`No recipe with id ${id} — use searchRecipes first`)
   return { id: snap.id, ...snap.data() }
 }
 
 const recipeCreate = async (uid: string, input: Record<string, unknown>) => {
   const data = sanitizeRecipe(input)
-  const ref = db.collection(`users/${uid}/recipes`).doc()
+  const ref = db.collection('recipes').doc()
   await ref.set({ ...data, createdAt: Date.now(), updatedAt: Date.now() })
   return { ok: true, id: ref.id, recipe: data }
 }
 
 const recipeUpdate = async (uid: string, id: string, input: Record<string, unknown>) => {
-  const ref = db.doc(`users/${uid}/recipes/${id}`)
+  let ref = db.doc(`recipes/${id}`)
+  if (!(await ref.get()).exists && (await db.doc(`users/${uid}/recipes/${id}`).get()).exists) ref = db.doc(`users/${uid}/recipes/${id}`)
   const snap = await ref.get()
   if (!snap.exists) throw new Error(`No recipe with id ${id}`)
   // full-shape update: the AI sends the complete corrected recipe
@@ -682,6 +698,9 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
   aggressive / moderate / mild / maintenance / surplus, with est. kg/week.
 
 ## Data semantics
+- LIBRARY IS SHARED: foods and recipes live in one global library — every user reads and
+  writes the same set. Diary entries bake macros in at log time, so editing a shared food
+  never rewrites anyone's history.
 - Diary day = entries[] (food; macros BAKED IN at log time), workouts[], training flag,
   sleep hours, steps, body {weightKg, bodyFatPct?, muscleKg?}, goals snapshot.
 - Steps precedence: manually typed > Garmin watch > phone Health Connect.
