@@ -317,6 +317,173 @@ const foodUpdate = async (uid: string, id: string, input: Record<string, unknown
   return { ok: true, id, changes }
 }
 
+/* ---------- library hygiene: audit + user-confirmed cleanup ---------- */
+
+interface LibFood {
+  id: string; name?: string; unit?: string; kcal?: number; protein?: number
+  carbs?: number; fat?: number; alcohol?: boolean; alcoholG?: number | null
+  serving?: number | null; used?: number; lastUsed?: number
+}
+
+const allFoods = async (uid: string): Promise<LibFood[]> => {
+  const [shared, legacy] = await Promise.all([
+    db.collection('foods').get(),
+    db.collection(`users/${uid}/foods`).get(),
+  ])
+  const seen = new Set(shared.docs.map((d) => d.id))
+  return [...shared.docs, ...legacy.docs.filter((d) => !seen.has(d.id))].map(
+    (d) => ({ id: d.id, ...(d.data() as Omit<LibFood, 'id'>) }),
+  )
+}
+
+const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+const libraryAudit = async (uid: string) => {
+  const foods = await allFoods(uid)
+  const rows = foods.map((f) => {
+    const expected = Math.round(4 * (f.protein ?? 0) + 4 * (f.carbs ?? 0) + 9 * (f.fat ?? 0) + 7 * (f.alcoholG ?? 0))
+    const kcal = f.kcal ?? 0
+    const drift = kcal - expected
+    return {
+      ...f,
+      basis: ['scoop', 'unit'].includes(f.unit ?? 'g') ? `per 1 ${f.unit}` : `per 100${f.unit ?? 'g'}`,
+      kcalFromMacros: expected,
+      kcalDrift: drift,
+      flags: [
+        Math.abs(drift) > Math.max(25, kcal * 0.15) ? 'MACRO_MISMATCH' : null,
+        kcal <= 0 ? 'ZERO_KCAL' : null,
+        (f.protein ?? 0) + (f.carbs ?? 0) + (f.fat ?? 0) === 0 && kcal > 0 && !f.alcohol ? 'NO_MACROS' : null,
+      ].filter(Boolean),
+    }
+  })
+  // duplicate candidates: identical normalized names, or one containing the other
+  const groups: string[][] = []
+  const grouped = new Set<string>()
+  for (let i = 0; i < rows.length; i++) {
+    if (grouped.has(rows[i].id)) continue
+    const a = normName(String(rows[i].name ?? ''))
+    const g = [rows[i].id]
+    for (let j = i + 1; j < rows.length; j++) {
+      const b = normName(String(rows[j].name ?? ''))
+      if (a && b && (a === b || (a.length > 4 && b.length > 4 && (a.includes(b) || b.includes(a))))) {
+        g.push(rows[j].id)
+        grouped.add(rows[j].id)
+      }
+    }
+    if (g.length > 1) groups.push(g)
+  }
+  const recipes = (await db.collection('recipes').get()).docs.map((d) => {
+    const r = d.data() as { name?: string; portions?: number; sections?: { ingredients?: { kcal?: number | null }[] }[] }
+    const ings = (r.sections ?? []).flatMap((x) => x.ingredients ?? [])
+    return {
+      id: d.id, name: r.name, portions: r.portions,
+      ingredients: ings.length,
+      ingredientsMissingMacros: ings.filter((x) => x.kcal == null).length,
+    }
+  })
+  return {
+    guidance:
+      'Verify branded items against label knowledge and flag anything implausible. Present the full cleanup plan (macro corrections, duplicate merges, deletes) to the USER and only call libraryApply after they explicitly confirm. Merges/deletes never touch diaries. retrofitDiaries=true additionally rewrites diary entries logged from a corrected food (exact name match, rescaled by amount) across ALL users — say so when confirming.',
+    foods: rows,
+    duplicateGroups: groups,
+    recipes,
+  }
+}
+
+export interface LibraryApplyBody {
+  updates?: ({ id: string } & Record<string, unknown>)[]
+  merges?: { keepId: string; removeIds: string[] }[]
+  deletes?: string[]
+  retrofitDiaries?: boolean
+}
+
+const libraryApply = async (uid: string, body: LibraryApplyBody) => {
+  const foods = await allFoods(uid)
+  const byId = new Map(foods.map((f) => [f.id, f]))
+  // an edited/removed food may still live only in a legacy personal lane
+  const resolveRef = async (id: string) => {
+    const shared = db.doc(`foods/${id}`)
+    if ((await shared.get()).exists) return shared
+    const legacy = db.doc(`users/${uid}/foods/${id}`)
+    if ((await legacy.get()).exists) return legacy
+    return null
+  }
+
+  const corrections: { oldName: string; food: LibFood }[] = []
+  let updated = 0
+  for (const u of body.updates ?? []) {
+    const before = byId.get(u.id)
+    const ref = before ? await resolveRef(u.id) : null
+    if (!before || !ref) continue
+    const changes = sanitizeFood(u, true)
+    if (!Object.keys(changes).length) continue
+    await ref.update(changes)
+    updated++
+    const macroChanged = ['kcal', 'protein', 'carbs', 'fat', 'alcoholG'].some((k) => k in changes)
+    if (body.retrofitDiaries && macroChanged) {
+      corrections.push({ oldName: String(before.name ?? ''), food: { ...before, ...changes } })
+    }
+  }
+
+  let deleted = 0
+  const removeIds = [
+    ...(body.deletes ?? []),
+    ...(body.merges ?? []).flatMap((m) => m.removeIds.filter((r) => r !== m.keepId)),
+  ]
+  for (const id of removeIds) {
+    const ref = await resolveRef(id)
+    if (ref) { await ref.delete(); deleted++ }
+  }
+
+  // retro-correct diary entries logged from corrected foods — matched by the
+  // food's exact name, rescaled from the logged amount. Goal snapshots,
+  // workouts and everything else on each day stay untouched.
+  let entriesRewritten = 0
+  const daysTouched = new Set<string>()
+  const usersTouched = new Set<string>()
+  if (corrections.length) {
+    const daySnaps = await db.collectionGroup('days').get()
+    for (const d of daySnaps.docs) {
+      const data = d.data() as { entries?: Record<string, unknown>[] }
+      if (!data.entries?.length) continue
+      let changed = false
+      const entries = data.entries.map((e) => {
+        const c = corrections.find((x) => x.oldName && x.oldName === e.name)
+        if (!c) return e
+        const f = c.food
+        const per1 = ['scoop', 'unit'].includes(f.unit ?? 'g')
+        const qty = Number(e.amount ?? e.grams ?? (per1 ? 1 : NaN))
+        if (!Number.isFinite(qty) || qty <= 0) return e
+        const factor = per1 ? qty : qty / 100
+        changed = true
+        entriesRewritten++
+        return {
+          ...e,
+          ...(f.name && f.name !== e.name ? { name: f.name } : {}),
+          kcal: Math.round((f.kcal ?? 0) * factor),
+          protein: Math.round((f.protein ?? 0) * factor * 10) / 10,
+          carbs: Math.round((f.carbs ?? 0) * factor * 10) / 10,
+          fat: Math.round((f.fat ?? 0) * factor * 10) / 10,
+          ...(f.alcoholG != null ? { alcoholG: Math.round(f.alcoholG * factor * 10) / 10 } : {}),
+        }
+      })
+      if (changed) {
+        await d.ref.update({ entries })
+        daysTouched.add(d.ref.path)
+        usersTouched.add(d.ref.path.split('/')[1])
+      }
+    }
+  }
+
+  return {
+    ok: true, updated, deleted, entriesRewritten,
+    daysTouched: daysTouched.size, usersTouched: usersTouched.size,
+    note: corrections.length && !entriesRewritten
+      ? 'No diary entries matched the corrected food names — nothing retro-corrected.'
+      : undefined,
+  }
+}
+
 /* ---------- diary write: log a food eaten today (or a given date) ---------- */
 
 const MEAL_IDS = ['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3']
@@ -713,8 +880,13 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
 - Weigh-ins update profile.weightKg automatically, keeping protein g/kg and zones current.
 
 ## How to work (recommended flows)
-- Log a known food: searchFoods → logFood {foodId, amount in the food's own basis}.
-- Log a one-off: logFood {name, kcal, protein?, carbs?, fat?}.
+- LOGGING — ALWAYS check the library first: searchFoods for each item the user mentions
+  (foods carry used/lastUsed — prefer what they log often). Then tell the user the plan
+  BEFORE logging: "from the library: X, Y · suggest adding to the library (reusable/branded):
+  Z · one-off quick-add: W", let them confirm, then log. Library items via
+  logFood {foodId, amount}; genuinely one-off things via logFood {name, kcal, …}.
+- One-offs: logFood {name, kcal, protein?, carbs?, fat?} — but if it's branded or
+  repeatable, addFood first so the whole family benefits (the library is shared).
 - Fix an entry: getDay (returns entry ids) → updateEntry (amount-only edits rescale macros)
   or deleteEntry.
 - Weigh-in: logBody {weightKg, bodyFatPct?, muscleKg?}.
@@ -722,6 +894,17 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
   unlogged days are missing data, never assumed) and compare implied kg vs actual weight
   trend; if they disagree by >100 kcal/day, recommend retuning maintenance in Settings.
 - Every write returns updated totals, goal (incl. endurance fuel) and remaining — coach on it.
+
+## Library hygiene (libraryAudit / libraryApply)
+The shared library accumulates duplicates and label-typo macros. libraryAudit returns every
+food with a computed kcal-vs-macros drift (4/4/9 + 7×alcohol), duplicate-name groups and
+missing-macro flags, plus recipes with incomplete ingredients. Your job: verify branded items
+(e.g. "USN BlueLab Whey", "Lancewood yoghurt") against label knowledge, then PRESENT a
+cleanup plan to the user — which macro corrections, which duplicate merges, which deletes —
+and only call libraryApply AFTER they explicitly confirm. Merges/deletes never touch diaries
+(entries bake macros in at log time). Macro corrections may set retrofitDiaries=true to also
+rewrite diary entries logged from that food (matched by exact name, rescaled by the logged
+amount) across ALL users — state this clearly when asking for confirmation.
 
 ## Judging a day fairly
 Use the day's OWN goal from getDay (it includes the frozen snapshot + endurance fuel).
@@ -942,6 +1125,30 @@ function buildServer(uid: string): McpServer {
       inputSchema: { id: z.string().min(1), name: z.string().min(1).optional(), ...foodFields },
     },
     async ({ id, ...changes }) => text(await foodUpdate(uid, id, changes as Record<string, unknown>)),
+  )
+
+  server.registerTool(
+    'library_audit',
+    {
+      description:
+        'Stress-test the SHARED library: every food with computed kcal-vs-macros drift (4/4/9 + 7×alcohol), duplicate-name groups, missing-macro flags, and recipes with incomplete ingredient macros. Verify branded items against label knowledge, then PRESENT a cleanup plan to the user — only call library_apply after they explicitly confirm.',
+    },
+    async () => text(await libraryAudit(uid)),
+  )
+
+  server.registerTool(
+    'library_apply',
+    {
+      description:
+        'Apply a user-CONFIRMED library cleanup. updates: corrected macros/names per food id. merges: keep one id, delete the rest (diaries unaffected — entries bake macros in). deletes: junk ids. retrofitDiaries=true also rewrites diary entries logged from each corrected food (exact name match, rescaled by amount) across ALL users — never use without the user explicitly agreeing to that.',
+      inputSchema: {
+        updates: z.array(z.object({ id: z.string().min(1), name: z.string().min(1).optional(), ...foodFields })).optional(),
+        merges: z.array(z.object({ keepId: z.string().min(1), removeIds: z.array(z.string().min(1)).min(1) })).optional(),
+        deletes: z.array(z.string().min(1)).optional(),
+        retrofitDiaries: z.boolean().optional().describe('Also rewrite matching diary entries with the corrected macros'),
+      },
+    },
+    async (input) => text(await libraryApply(uid, input as LibraryApplyBody)),
   )
 
   return server
@@ -1517,6 +1724,82 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/library/audit': {
+      get: {
+        operationId: 'libraryAudit',
+        summary:
+          'Stress-test the shared library: kcal-vs-macros drift per food, duplicate-name groups, missing macros, recipes with incomplete ingredients. Present a cleanup plan to the user, then call libraryApply only after they confirm.',
+        responses: {
+          '200': {
+            description: 'Audit report',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    guidance: { type: 'string' },
+                    foods: { type: 'array', items: { type: 'object', properties: {
+                      id: { type: 'string' }, name: { type: 'string' }, basis: { type: 'string' },
+                      kcalFromMacros: { type: 'number' }, kcalDrift: { type: 'number' },
+                      flags: { type: 'array', items: { type: 'string' } },
+                      used: { type: ['number', 'null'] },
+                      ...MACROS_SCHEMA.properties,
+                    } } },
+                    duplicateGroups: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+                    recipes: { type: 'array', items: { type: 'object', properties: {
+                      id: { type: 'string' }, name: { type: 'string' }, portions: { type: 'number' },
+                      ingredients: { type: 'number' }, ingredientsMissingMacros: { type: 'number' },
+                    } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/library/apply': {
+      post: {
+        operationId: 'libraryApply',
+        summary:
+          'Apply a user-CONFIRMED library cleanup: update food macros/names, merge duplicates (keepId wins, removeIds deleted), delete junk. retrofitDiaries=true also rewrites diary entries logged from corrected foods across all users — requires explicit user consent.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  updates: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, ...FOOD_INPUT_PROPS } } },
+                  merges: { type: 'array', items: { type: 'object', properties: {
+                    keepId: { type: 'string' }, removeIds: { type: 'array', items: { type: 'string' } },
+                  }, required: ['keepId', 'removeIds'] } },
+                  deletes: { type: 'array', items: { type: 'string' } },
+                  retrofitDiaries: { type: 'boolean' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'What changed',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' }, updated: { type: 'number' }, deleted: { type: 'number' },
+                    entriesRewritten: { type: 'number' }, daysTouched: { type: 'number' }, usersTouched: { type: 'number' },
+                    note: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/foods/{id}': {
       patch: {
         operationId: 'updateFood',
@@ -1599,6 +1882,14 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
   const foodIdMatch = path.match(/^\/foods\/([A-Za-z0-9]+)$/)
 
   try {
+    if (req.method === 'GET' && path === '/library/audit') {
+      res.json(await libraryAudit(uid))
+      return
+    }
+    if (req.method === 'POST' && path === '/library/apply') {
+      res.json(await libraryApply(uid, body as LibraryApplyBody))
+      return
+    }
     const recipeIdMatch = path.match(/^\/recipes\/([A-Za-z0-9]+)$/)
     if (req.method === 'GET' && path === '/recipes') {
       res.json(await recipesPayload(uid, String(req.query.query ?? '')))
