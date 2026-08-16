@@ -71,6 +71,22 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
       const steps = stepsOf(day) || null
       if (steps) extra.push(`Steps: ${steps.toLocaleString()}${day.steps ? ' (manual)' : ' (Garmin)'}`)
       if (day.garmin?.restingHr) extra.push(`Resting HR: ${day.garmin.restingHr} bpm (Garmin)`)
+      const g = day.garmin
+      if (g) {
+        const w = [
+          g.sleepScore != null ? `sleep score ${g.sleepScore}/100` : null,
+          g.hrv != null ? `HRV ${g.hrv}ms${g.hrvStatus ? ` (${String(g.hrvStatus).toLowerCase()})` : ''}` : null,
+          g.readiness != null ? `training readiness ${g.readiness}/100${g.readinessLevel ? ` (${String(g.readinessLevel).toLowerCase()})` : ''}` : null,
+          g.bodyBattery != null ? `body battery ${g.bodyBattery}${g.bodyBatteryHigh != null ? ` (range ${g.bodyBatteryLow ?? '?'}–${g.bodyBatteryHigh})` : ''}` : null,
+          g.stress != null ? `stress avg ${g.stress}${g.stressMax != null ? ` (max ${g.stressMax})` : ''}` : null,
+          g.spo2 != null ? `SpO2 ${g.spo2}%` : null,
+          g.respiration != null ? `respiration ${g.respiration}/min` : null,
+          g.intensityMin != null ? `intensity ${g.intensityMin} min` : null,
+          g.floors != null ? `floors ${g.floors}` : null,
+          g.activeKcal != null ? `active ${g.activeKcal} kcal (info only, never eaten back)` : null,
+        ].filter(Boolean)
+        if (w.length) extra.push(`Garmin wellness: ${w.join(' · ')}`)
+      }
       const score = scoreDay(day, settings)
       extra.push(`Leaderboard score: ${score.points}/${MAX_POINTS} pts`)
       const booze = day.entries.filter((e) => e.alcohol)
@@ -105,9 +121,15 @@ export function rangeReport(
     const sleep = day.sleep ? ` | sleep ${day.sleep}h` : ''
     const body = day.body?.weightKg ? ` | weight ${day.body.weightKg}kg${day.body.bodyFatPct ? ` (${day.body.bodyFatPct}% bf)` : ''}` : ''
     const steps = stepsOf(day) || null
+    const g = day.garmin
     const wellness = [
       steps ? ` | steps ${steps}` : '',
-      day.garmin?.restingHr ? ` | resting HR ${day.garmin.restingHr}` : '',
+      g?.restingHr ? ` | resting HR ${g.restingHr}` : '',
+      g?.sleepScore != null ? ` | sleep score ${g.sleepScore}` : '',
+      g?.hrv != null ? ` | HRV ${g.hrv}` : '',
+      g?.readiness != null ? ` | readiness ${g.readiness}` : '',
+      g?.stress != null ? ` | stress ${g.stress}` : '',
+      g?.bodyBattery != null ? ` | body batt ${g.bodyBattery}` : '',
     ].join('')
     const drinks = day.entries.filter((e) => e.alcohol)
     const shame = drinks.reduce((s, e) => s + e.kcal, 0)

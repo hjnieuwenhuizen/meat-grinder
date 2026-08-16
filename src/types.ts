@@ -105,10 +105,31 @@ export interface Workout {
   cadence?: number | null
 }
 
-/** daily wellness pulled from Garmin */
+/** daily wellness pulled from Garmin — every field optional/additive */
 export interface GarminDay {
   steps?: number | null
   restingHr?: number | null
+  /** sleep quality 0–100 */
+  sleepScore?: number | null
+  /** avg overnight HRV, ms */
+  hrv?: number | null
+  hrvStatus?: string | null
+  /** avg stress 0–100 */
+  stress?: number | null
+  stressMax?: number | null
+  bodyBattery?: number | null
+  bodyBatteryHigh?: number | null
+  bodyBatteryLow?: number | null
+  /** training readiness 0–100 — Garmin's suggested-rest signal */
+  readiness?: number | null
+  readinessLevel?: string | null
+  /** moderate + 2×vigorous minutes */
+  intensityMin?: number | null
+  floors?: number | null
+  /** avg overnight breaths/min */
+  respiration?: number | null
+  spo2?: number | null
+  activeKcal?: number | null
 }
 
 export interface DayDoc {

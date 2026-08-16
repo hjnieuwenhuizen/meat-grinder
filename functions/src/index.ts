@@ -46,7 +46,7 @@ interface DayDoc {
   entries: unknown[]
   workouts: Workout[]
   sleep?: number | null
-  garmin?: { steps?: number | null; restingHr?: number | null }
+  garmin?: Record<string, number | string | null>
   goals?: { trainingEnabled: boolean; rest: unknown; training: unknown }
 }
 
@@ -161,11 +161,28 @@ async function syncUser(uid: string, full = false, trigger = 'manual'): Promise<
   let sleepSet = 0
   let workoutsAdded = 0
 
-  // sleep: fill only when the user hasn't typed a value
+  // sleep: hours fill only when the user hasn't typed a value, but the
+  // wellness metrics riding along (score, HRV, respiration, SpO2) are
+  // captured regardless — they have no manual lane to collide with
+  const sleepMeta: Record<string, Record<string, number>> = {}
   for (const key of sleepKeys) {
     try {
       const data = await client.getSleepData(new Date(`${key}T12:00:00`))
-      const secs = data?.dailySleepDTO?.sleepTimeSeconds
+      const dto = data?.dailySleepDTO as
+        | (typeof data.dailySleepDTO & {
+            averageSpO2Value?: number
+            averageRespirationValue?: number
+            avgOvernightHrv?: number
+            sleepScores?: { overall?: { value?: number } }
+          })
+        | undefined
+      const meta: Record<string, number> = {}
+      if (dto?.sleepScores?.overall?.value) meta.sleepScore = Math.round(dto.sleepScores.overall.value)
+      if (dto?.avgOvernightHrv) meta.hrv = Math.round(dto.avgOvernightHrv)
+      if (dto?.averageRespirationValue) meta.respiration = Math.round(dto.averageRespirationValue * 10) / 10
+      if (dto?.averageSpO2Value) meta.spo2 = Math.round(dto.averageSpO2Value)
+      if (Object.keys(meta).length) sleepMeta[key] = meta
+      const secs = dto?.sleepTimeSeconds
       if (!secs || secs <= 0) continue
       const day = await loadDay(key)
       if (day.sleep == null) {
@@ -186,7 +203,7 @@ async function syncUser(uid: string, full = false, trigger = 'manual'): Promise<
   const stepsLog: Record<string, unknown>[] = []
   for (const key of sleepKeys) {
     const date = new Date(`${key}T12:00:00`)
-    const g: { steps?: number | null; restingHr?: number | null } = {}
+    const g: Record<string, number | string> = { ...(sleepMeta[key] ?? {}) }
     let report = 0
     let live = 0
     let stepErr: string | null = null
@@ -197,10 +214,30 @@ async function syncUser(uid: string, full = false, trigger = 'manual'): Promise<
     }
     try {
       profileName ??= (await client.getUserProfile()).displayName
-      const sum = await client.client.get<{ totalSteps?: number }>(
+      const sum = await client.client.get<{
+        totalSteps?: number
+        activeKilocalories?: number
+        floorsAscended?: number
+        averageStressLevel?: number
+        maxStressLevel?: number
+        bodyBatteryMostRecentValue?: number
+        bodyBatteryHighestValue?: number
+        bodyBatteryLowestValue?: number
+        moderateIntensityMinutes?: number
+        vigorousIntensityMinutes?: number
+      }>(
         `https://connectapi.garmin.com/usersummary-service/usersummary/daily/${profileName}?calendarDate=${key}`,
       )
       live = sum?.totalSteps ?? 0
+      if (sum?.activeKilocalories) g.activeKcal = Math.round(sum.activeKilocalories)
+      if (sum?.floorsAscended) g.floors = Math.round(sum.floorsAscended)
+      if (sum?.averageStressLevel && sum.averageStressLevel > 0) g.stress = Math.round(sum.averageStressLevel)
+      if (sum?.maxStressLevel && sum.maxStressLevel > 0) g.stressMax = Math.round(sum.maxStressLevel)
+      if (sum?.bodyBatteryMostRecentValue != null) g.bodyBattery = Math.round(sum.bodyBatteryMostRecentValue)
+      if (sum?.bodyBatteryHighestValue != null) g.bodyBatteryHigh = Math.round(sum.bodyBatteryHighestValue)
+      if (sum?.bodyBatteryLowestValue != null) g.bodyBatteryLow = Math.round(sum.bodyBatteryLowestValue)
+      const intensity = (sum?.moderateIntensityMinutes ?? 0) + 2 * (sum?.vigorousIntensityMinutes ?? 0)
+      if (intensity > 0) g.intensityMin = intensity
     } catch (e) {
       stepErr = `${stepErr ? stepErr + ' · ' : ''}live: ${(e as Error).message}`
     }
@@ -212,9 +249,27 @@ async function syncUser(uid: string, full = false, trigger = 'manual'): Promise<
     } catch (e) {
       logger.info(`${uid} no heart rate for ${key}: ${(e as Error).message}`)
     }
+    // training readiness — Garmin's own "suggested rest" signal
+    try {
+      const tr = await client.client.get<{ score?: number; level?: string }[]>(
+        `https://connectapi.garmin.com/metrics-service/metrics/trainingreadiness/${key}`,
+      )
+      if (tr?.[0]?.score != null) {
+        g.readiness = Math.round(tr[0].score)
+        if (tr[0].level) g.readinessLevel = String(tr[0].level)
+      }
+    } catch { /* not all watches have training readiness */ }
+    // HRV status vs personal baseline
+    try {
+      const hrv = await client.client.get<{ hrvSummary?: { lastNightAvg?: number; status?: string } }>(
+        `https://connectapi.garmin.com/hrv-service/hrv/${key}`,
+      )
+      if (hrv?.hrvSummary?.lastNightAvg && !g.hrv) g.hrv = Math.round(hrv.hrvSummary.lastNightAvg)
+      if (hrv?.hrvSummary?.status) g.hrvStatus = String(hrv.hrvSummary.status)
+    } catch { /* not all watches record HRV */ }
     stepsLog.push({ key, report, live, wrote: best > 0 ? best : null, hr: g.restingHr ?? null, ...(stepErr ? { error: stepErr } : {}) })
     logger.info(`${uid} steps ${key}: report=${report} live=${live} wrote=${best}${stepErr ? ` err=${stepErr}` : ''}`)
-    if (g.steps == null && g.restingHr == null) continue
+    if (!Object.keys(g).length) continue
     const day = await loadDay(key)
     const merged = { ...(day.garmin ?? {}), ...g }
     if (JSON.stringify(merged) !== JSON.stringify(day.garmin ?? {})) {

@@ -177,6 +177,10 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
     body: day.body ?? null,
     steps: day.garmin?.steps ?? day.health?.steps ?? day.steps ?? null,
     restingHeartRate: day.garmin?.restingHr ?? null,
+    // full Garmin wellness lane: sleepScore, hrv+hrvStatus, readiness+level,
+    // bodyBattery(+high/low), stress(+max), spo2, respiration, intensityMin,
+    // floors, activeKcal (informational — never eaten back)
+    wellness: day.garmin ?? null,
     alcohol: alcohol.length
       ? {
           kcal: Math.round(alcohol.reduce((s, e) => s + e.kcal, 0)),
@@ -870,7 +874,12 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
   never rewrites anyone's history.
 - Diary day = entries[] (food; macros BAKED IN at log time), workouts[], training flag,
   sleep hours, steps, body {weightKg, bodyFatPct?, muscleKg?}, goals snapshot.
-- Steps precedence: manually typed > Garmin watch > phone Health Connect.
+- Steps precedence: Garmin watch > phone Health Connect > legacy typed value.
+- WELLNESS (day.wellness, when a Garmin is connected): sleepScore 0–100, hrv (ms, overnight)
+  + hrvStatus, readiness 0–100 + readinessLevel (Garmin's suggested-rest signal), bodyBattery
+  (+High/Low), stress avg/max 0–100, spo2 %%, respiration breaths/min, intensityMin, floors,
+  activeKcal. Use it to coach recovery: low readiness/HRV/sleep score → protein, hydration,
+  early night, no heroic training; never prescribe eating back activeKcal.
 - Alcohol entries carry alcohol:true and grams of pure alcohol; they count fully in totals.
 - Meal slots: breakfast, snack1, lunch, snack2, supper, snack3 (Africa/Johannesburg time).
 - Library foods: macros per 100 g/ml, or per 1 scoop/unit. Diary entries store final macros.
@@ -1228,6 +1237,10 @@ const DAY_SUMMARY_PROPS = {
   sleepHours: { type: ['number', 'null'] },
   steps: { type: ['number', 'null'] },
   restingHeartRate: { type: ['number', 'null'] },
+  wellness: {
+    type: ['object', 'null'],
+    description: 'Garmin wellness: sleepScore, hrv, hrvStatus, readiness, readinessLevel, bodyBattery/High/Low, stress, stressMax, spo2, respiration, intensityMin, floors, activeKcal (informational)',
+  },
   alcohol: {
     type: ['object', 'null'],
     properties: { kcal: { type: 'number' }, pureAlcoholGrams: { type: 'number' } },

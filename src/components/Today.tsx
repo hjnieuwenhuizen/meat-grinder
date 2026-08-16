@@ -147,6 +147,43 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
             ❤️ <b className="font-medium text-bone">{day.garmin.restingHr}</b> bpm rest
           </span>
         ) : null}
+        {day.garmin?.sleepScore != null && (
+          <span className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist" title="Garmin sleep score (0–100)">
+            💤 <b className="font-medium text-bone">{day.garmin.sleepScore}</b>
+          </span>
+        )}
+        {day.garmin?.readiness != null && (
+          <span
+            className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist"
+            title={`Training readiness${day.garmin.readinessLevel ? ` — ${day.garmin.readinessLevel}` : ''} (Garmin's suggested-rest signal)`}
+          >
+            ⚡ <b className={`font-medium ${day.garmin.readiness >= 70 ? 'text-grind' : day.garmin.readiness < 40 ? 'text-over' : 'text-bone'}`}>{day.garmin.readiness}</b> ready
+          </span>
+        )}
+        {day.garmin?.bodyBattery != null && (
+          <span
+            className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist"
+            title={`Body battery now${day.garmin.bodyBatteryHigh != null ? ` (today ${day.garmin.bodyBatteryLow ?? '?'}–${day.garmin.bodyBatteryHigh})` : ''}`}
+          >
+            🔋 <b className="font-medium text-bone">{day.garmin.bodyBattery}</b>
+          </span>
+        )}
+        {day.garmin?.stress != null && (
+          <span
+            className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist"
+            title={`Average stress${day.garmin.stressMax != null ? ` (max ${day.garmin.stressMax})` : ''}`}
+          >
+            🧠 <b className="font-medium text-bone">{day.garmin.stress}</b> stress
+          </span>
+        )}
+        {day.garmin?.hrv != null && (
+          <span
+            className="flex items-center gap-1.5 rounded-full border border-edge bg-panel px-4 py-1.5 text-sm text-mist"
+            title={`Overnight HRV${day.garmin.hrvStatus ? ` — ${day.garmin.hrvStatus}` : ''}`}
+          >
+            🫀 <b className="font-medium text-bone">{day.garmin.hrv}</b> ms
+          </span>
+        )}
         <button
           type="button"
           onClick={() => setBodyOpen(true)}
@@ -619,10 +656,21 @@ function Mission({ goal, totals, day, surplus, foods, onRescue }: { goal: Macros
   else if (kLeft > 150) text = <>Protein hit. <b className="text-bone">{kLeft} kcal</b> remaining. Carbs and fat are flexible.</>
   else text = <>Goals hit. Go lift something heavy. 🏋️</>
 
-  if (shortSleep)
+  const lowReadiness = day.garmin?.readiness != null && day.garmin.readiness < 40
+  if (shortSleep || lowReadiness)
     text = (
       <>
-        {text} <span className="text-carbs">😴 {day.sleep}h sleep — recovery first today: normal meals, water, early night. No heroics.</span>
+        {text}{' '}
+        <span className="text-carbs">
+          {shortSleep ? `😴 ${day.sleep}h sleep` : `⚡ readiness ${day.garmin!.readiness}`} — recovery first today:
+          normal meals, water, early night. No heroics.
+        </span>
+      </>
+    )
+  else if (day.training && day.garmin?.readiness != null && day.garmin.readiness >= 80)
+    text = (
+      <>
+        {text} <span className="text-grind">⚡ Readiness {day.garmin.readiness} — green light, go hard.</span>
       </>
     )
 
