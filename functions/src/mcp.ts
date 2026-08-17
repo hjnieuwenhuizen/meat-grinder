@@ -6,7 +6,7 @@
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions'
 import { getApps, initializeApp } from 'firebase-admin/app'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import * as crypto from 'crypto'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -188,6 +188,7 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
         }
       : null,
     workouts: day.workouts.map((w) => ({
+      id: (w as { id?: string }).id ?? null,
       type: w.type,
       name: w.name ?? null,
       minutes: w.duration ?? null,
@@ -492,16 +493,15 @@ const libraryApply = async (uid: string, body: LibraryApplyBody) => {
 
 /* ---------- gym: log sets live; the watch's activity merges in later ---------- */
 
+interface SetInput { exercise: string; weightKg?: number; reps?: number; warmup?: boolean; toFailure?: boolean }
 interface LogSetsInput {
   date?: string
   type?: string
-  sets: { exercise: string; weightKg?: number; reps?: number }[]
+  sets: SetInput[]
 }
 
-const logSets = async (uid: string, input: LogSetsInput) => {
-  const key = input.date && DATE_RX.test(input.date) ? input.date : localDateKey()
-  const type = ['push', 'legs', 'pull', 'strength'].includes(input.type ?? '') ? (input.type as string) : 'strength'
-  const clean = (input.sets ?? [])
+const sanitizeSets = (sets: SetInput[]) =>
+  (sets ?? [])
     .filter((x) => String(x.exercise ?? '').trim())
     .slice(0, 50)
     .map((x) => ({
@@ -509,8 +509,42 @@ const logSets = async (uid: string, input: LogSetsInput) => {
       exercise: String(x.exercise).trim().slice(0, 60),
       weightKg: Number(x.weightKg) > 0 ? Number(x.weightKg) : null,
       reps: Math.round(Number(x.reps)) > 0 ? Math.round(Number(x.reps)) : null,
+      warmup: x.warmup ? true : null,
+      toFailure: x.toFailure ? true : null,
     }))
+
+const exerciseSlug = (name: string): string =>
+  name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60)
+
+// self-building shared exercise library — mirrors the client's bumpExercises
+const bumpExercises = async (names: string[]) => {
+  const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))]
+  await Promise.all(
+    unique.map((name) =>
+      db.doc(`exercises/${exerciseSlug(name)}`).set(
+        { name, used: FieldValue.increment(1), lastUsed: Date.now() },
+        { merge: true },
+      ),
+    ),
+  )
+}
+
+const exercisesPayload = async (query: string) => {
+  const snap = await db.collection('exercises').get()
+  const q = query.toLowerCase()
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as { name?: string; used?: number; lastUsed?: number }) }))
+    .filter((e) => String(e.name ?? '').toLowerCase().includes(q))
+    .sort((a, b) => (b.used ?? 0) - (a.used ?? 0))
+    .slice(0, 100)
+}
+
+const logSets = async (uid: string, input: LogSetsInput) => {
+  const key = input.date && DATE_RX.test(input.date) ? input.date : localDateKey()
+  const type = ['push', 'legs', 'pull', 'strength'].includes(input.type ?? '') ? (input.type as string) : 'strength'
+  const clean = sanitizeSets(input.sets)
   if (!clean.length) throw new Error('sets[] with at least one exercise is required')
+  await bumpExercises(clean.map((x) => x.exercise))
 
   const ref = db.doc(`users/${uid}/days/${key}`)
   const day: DayDoc = { training: false, entries: [], workouts: [], ...((await ref.get()).data() as Partial<DayDoc>) }
@@ -541,15 +575,62 @@ const logSets = async (uid: string, input: LogSetsInput) => {
   day.training = true
   stampGoals(day, settings)
   await ref.set(day)
-  const sets = (workout.sets as { weightKg?: number | null; reps?: number | null }[]) ?? []
+  const sets = (workout.sets as { weightKg?: number | null; reps?: number | null; warmup?: boolean | null }[]) ?? []
   return {
     ok: true,
     date: key,
     workoutType: workout.type,
     totalSets: sets.length,
-    volumeKg: Math.round(sets.reduce((v, x) => v + (x.weightKg ?? 0) * (x.reps ?? 0), 0)),
+    workingSets: sets.filter((x) => !x.warmup).length,
+    volumeKg: Math.round(sets.reduce((v, x) => v + (x.warmup ? 0 : (x.weightKg ?? 0) * (x.reps ?? 0)), 0)),
     note: 'Sets saved. When the watch syncs its strength activity, it merges onto this same card (duration/kcal/HR attach; no duplicate).',
   }
+}
+
+interface WorkoutChanges {
+  type?: string
+  name?: string
+  minutes?: number
+  kcal?: number
+  distanceKm?: number
+  when?: string
+  meal?: string
+  sets?: SetInput[]
+}
+
+const WORKOUT_TYPE_IDS = ['push', 'legs', 'pull', 'strength', 'run', 'walk', 'ride', 'swim', 'hike', 'stairs', 'cardio', 'other']
+
+const workoutUpdate = async (uid: string, date: string, workoutId: string, changes: WorkoutChanges) => {
+  const ref = db.doc(`users/${uid}/days/${date}`)
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...((await ref.get()).data() as Partial<DayDoc>) }
+  const w = (day.workouts ?? []).find((x) => (x as { id?: string }).id === workoutId) as Record<string, unknown> | undefined
+  if (!w) throw new Error(`No workout with id ${workoutId} on ${date} — get ids from getDay`)
+  if (changes.type && WORKOUT_TYPE_IDS.includes(changes.type)) w.type = changes.type
+  if (changes.name !== undefined) w.name = String(changes.name).slice(0, 80) || null
+  if (changes.minutes !== undefined) w.duration = Number(changes.minutes) > 0 ? Math.round(Number(changes.minutes)) : null
+  if (changes.kcal !== undefined) w.kcal = Number(changes.kcal) > 0 ? Math.round(Number(changes.kcal)) : null
+  if (changes.distanceKm !== undefined) w.distance = Number(changes.distanceKm) > 0 ? Number(changes.distanceKm) : null
+  if (changes.when === 'before' || changes.when === 'after') w.when = changes.when
+  if (changes.meal && MEAL_IDS.includes(changes.meal)) w.meal = changes.meal
+  if (changes.sets !== undefined) {
+    // REPLACES all sets — send the complete corrected list
+    w.sets = sanitizeSets(changes.sets)
+    await bumpExercises((w.sets as { exercise: string }[]).map((x) => x.exercise))
+  }
+  const settings = await loadSettings(uid)
+  stampGoals(day, settings)
+  await ref.set(day)
+  return { ok: true, date, workout: w }
+}
+
+const workoutDelete = async (uid: string, date: string, workoutId: string) => {
+  const ref = db.doc(`users/${uid}/days/${date}`)
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...((await ref.get()).data() as Partial<DayDoc>) }
+  const before = day.workouts?.length ?? 0
+  day.workouts = (day.workouts ?? []).filter((x) => (x as { id?: string }).id !== workoutId)
+  if (day.workouts.length === before) throw new Error(`No workout with id ${workoutId} on ${date}`)
+  await ref.set(day)
+  return { ok: true, date, workoutsRemaining: day.workouts.length }
 }
 
 /* ---------- diary write: log a food eaten today (or a given date) ---------- */
@@ -963,9 +1044,13 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
 - Fix an entry: getDay (returns entry ids) → updateEntry (amount-only edits rescale macros)
   or deleteEntry.
 - GYM SESSIONS: the user logs sets LIVE with logSets ("bench 4x8 at 80" → one element per
-  set). Sets append to the day's open strength card; when the watch's strength activity
-  syncs later it MERGES onto that card (duration/kcal/HR attach — never a duplicate).
-  getDay workouts include sets[] — use them for volume, progression and PR coaching.
+  set; warmup:true for warm-ups — excluded from working volume; toFailure:true when ground
+  to dust). ALWAYS listExercises first and reuse exact names so history groups cleanly (the
+  library is shared and self-building). Sets append to the day's open strength card; when
+  the watch's strength activity syncs later it MERGES onto that card (duration/kcal/HR
+  attach — never a duplicate). Fix mistakes with updateWorkout (sets REPLACES the whole
+  list) or deleteWorkout. getDay workouts include ids + sets[] — use them for volume,
+  progression and PR coaching.
 - Weigh-in: logBody {weightKg, bodyFatPct?, muscleKg?}.
 - Reviews: getRange — check averages, compliance, energyBalance (logged days only,
   unlogged days are missing data, never assumed) and compare implied kg vs actual weight
@@ -1205,6 +1290,50 @@ function buildServer(uid: string): McpServer {
   )
 
   server.registerTool(
+    'list_exercises',
+    {
+      description: 'The shared exercise library, frecency-sorted (most-used first). Use the exact names when logging sets so history groups cleanly.',
+      inputSchema: { query: z.string().describe('Substring filter; empty lists all (max 100)') },
+    },
+    async ({ query }) => text(await exercisesPayload(query)),
+  )
+
+  server.registerTool(
+    'update_workout',
+    {
+      description: "Edit a workout (id from get_day): type, name, minutes, kcal, distance, meal placement — and sets. Sending sets REPLACES the whole list, so send the complete corrected sets (ideal for fixing a typo'd weight or adding warmup flags).",
+      inputSchema: {
+        date: z.string().regex(DATE_RX),
+        workoutId: z.string().min(1),
+        type: z.enum(['push', 'legs', 'pull', 'strength', 'run', 'walk', 'ride', 'swim', 'hike', 'stairs', 'cardio', 'other']).optional(),
+        name: z.string().optional(),
+        minutes: z.number().min(0).optional(),
+        kcal: z.number().min(0).optional(),
+        distanceKm: z.number().min(0).optional(),
+        when: z.enum(['before', 'after']).optional(),
+        meal: z.enum(['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3']).optional(),
+        sets: z.array(z.object({
+          exercise: z.string().min(1),
+          weightKg: z.number().positive().optional(),
+          reps: z.number().int().positive().optional(),
+          warmup: z.boolean().optional(),
+          toFailure: z.boolean().optional(),
+        })).optional().describe('REPLACES all sets on the workout'),
+      },
+    },
+    async ({ date, workoutId, ...changes }) => text(await workoutUpdate(uid, date, workoutId, changes as WorkoutChanges)),
+  )
+
+  server.registerTool(
+    'delete_workout',
+    {
+      description: 'Delete a workout from a day (id from get_day).',
+      inputSchema: { date: z.string().regex(DATE_RX), workoutId: z.string().min(1) },
+    },
+    async ({ date, workoutId }) => text(await workoutDelete(uid, date, workoutId)),
+  )
+
+  server.registerTool(
     'library_audit',
     {
       description:
@@ -1223,6 +1352,8 @@ function buildServer(uid: string): McpServer {
           exercise: z.string().min(1),
           weightKg: z.number().positive().optional().describe('omit for bodyweight'),
           reps: z.number().int().positive().optional(),
+          warmup: z.boolean().optional().describe('warm-up set — excluded from working volume'),
+          toFailure: z.boolean().optional().describe('taken to muscular failure'),
         })).min(1).describe('One element per set — repeat the exercise name for each set'),
         type: z.enum(['push', 'legs', 'pull', 'strength']).optional().describe("Defaults to 'strength'"),
         date: z.string().regex(DATE_RX).optional().describe('YYYY-MM-DD, defaults to today'),
@@ -1823,6 +1954,88 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/exercises': {
+      get: {
+        operationId: 'listExercises',
+        summary: 'Shared exercise library, frecency-sorted. Use exact names when logging sets so history groups cleanly.',
+        parameters: [{ name: 'query', in: 'query', required: false, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'Exercises',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'array',
+                  items: { type: 'object', properties: {
+                    id: { type: 'string' }, name: { type: 'string' },
+                    used: { type: ['number', 'null'] }, lastUsed: { type: ['number', 'null'] },
+                  } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/workout': {
+      patch: {
+        operationId: 'updateWorkout',
+        summary: "Edit a workout (id from getDay): type/name/minutes/kcal/distance/meal — and sets. Sending sets REPLACES the whole list; send the complete corrected sets.",
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['date', 'workoutId'],
+                properties: {
+                  date: { type: 'string', description: 'YYYY-MM-DD' },
+                  workoutId: { type: 'string', description: 'from getDay' },
+                  type: { type: 'string', enum: ['push', 'legs', 'pull', 'strength', 'run', 'walk', 'ride', 'swim', 'hike', 'stairs', 'cardio', 'other'] },
+                  name: { type: 'string' },
+                  minutes: { type: 'number' },
+                  kcal: { type: 'number' },
+                  distanceKm: { type: 'number' },
+                  when: { type: 'string', enum: ['before', 'after'] },
+                  meal: { type: 'string', enum: ['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3'] },
+                  sets: {
+                    type: 'array',
+                    description: 'REPLACES all sets on the workout',
+                    items: { type: 'object', required: ['exercise'], properties: {
+                        exercise: { type: 'string' },
+                        weightKg: { type: 'number', description: 'omit for bodyweight' },
+                        reps: { type: 'integer' },
+                        warmup: { type: 'boolean', description: 'excluded from working volume' },
+                        toFailure: { type: 'boolean' },
+                      } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Updated workout',
+            content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, date: { type: 'string' }, workout: { type: 'object' } } } } },
+          },
+        },
+      },
+      delete: {
+        operationId: 'deleteWorkout',
+        summary: 'Delete a workout from a day (id from getDay).',
+        parameters: [
+          { name: 'date', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
+          { name: 'workoutId', in: 'query', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Deleted',
+            content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, date: { type: 'string' }, workoutsRemaining: { type: 'number' } } } } },
+          },
+        },
+      },
+    },
     '/workout/sets': {
       post: {
         operationId: 'logSets',
@@ -1846,6 +2059,8 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
                         exercise: { type: 'string' },
                         weightKg: { type: 'number', description: 'omit for bodyweight' },
                         reps: { type: 'integer' },
+                        warmup: { type: 'boolean', description: 'excluded from working volume' },
+                        toFailure: { type: 'boolean' },
                       },
                     },
                   },
@@ -2034,6 +2249,37 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
   try {
     if (req.method === 'GET' && path === '/library/audit') {
       res.json(await libraryAudit(uid))
+      return
+    }
+    if (req.method === 'GET' && path === '/exercises') {
+      res.json(await exercisesPayload(String(req.query.query ?? '')))
+      return
+    }
+    if (req.method === 'PATCH' && path === '/workout') {
+      const { date, workoutId, ...changes } = body as { date?: string; workoutId?: string } & WorkoutChanges
+      if (!date || !DATE_RX.test(date) || !workoutId) {
+        res.status(400).json({ error: 'date (YYYY-MM-DD) and workoutId are required — get ids from getDay' })
+        return
+      }
+      try {
+        res.json(await workoutUpdate(uid, date, workoutId, changes))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+      return
+    }
+    if (req.method === 'DELETE' && path === '/workout') {
+      const date = String(req.query.date ?? '')
+      const workoutId = String(req.query.workoutId ?? '')
+      if (!DATE_RX.test(date) || !workoutId) {
+        res.status(400).json({ error: 'date and workoutId query params are required' })
+        return
+      }
+      try {
+        res.json(await workoutDelete(uid, date, workoutId))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
       return
     }
     if (req.method === 'POST' && path === '/workout/sets') {

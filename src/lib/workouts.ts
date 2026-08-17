@@ -32,7 +32,7 @@ export const setsSummary = (w: Pick<Workout, 'sets'>): string => {
   const parts: string[] = []
   let current = ''
   for (const s of w.sets) {
-    const rep = `${s.weightKg ? `${s.weightKg}` : 'bw'}×${s.reps ?? '?'}`
+    const rep = `${s.weightKg ? `${s.weightKg}` : 'bw'}×${s.reps ?? '?'}${s.warmup ? 'ᵂ' : ''}${s.toFailure ? '!' : ''}`
     if (s.exercise === current) parts[parts.length - 1] += `, ${rep}`
     else {
       current = s.exercise
@@ -42,9 +42,13 @@ export const setsSummary = (w: Pick<Workout, 'sets'>): string => {
   return parts.join(' · ')
 }
 
-/** total volume in kg (weight × reps over all sets) */
+/** working volume in kg (weight × reps, warm-up sets excluded) */
 export const setsVolume = (w: Pick<Workout, 'sets'>): number =>
-  (w.sets ?? []).reduce((v, s) => v + (s.weightKg ?? 0) * (s.reps ?? 0), 0)
+  (w.sets ?? []).reduce((v, s) => v + (s.warmup ? 0 : (s.weightKg ?? 0) * (s.reps ?? 0)), 0)
+
+/** working (non-warm-up) set count */
+export const workingSets = (w: Pick<Workout, 'sets'>): number =>
+  (w.sets ?? []).filter((s) => !s.warmup).length
 
 export const workoutType = (id: WorkoutTypeId) =>
   WORKOUT_TYPES.find((t) => t.id === id) ?? FALLBACK

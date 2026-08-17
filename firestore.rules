@@ -60,6 +60,9 @@ service cloud.firestore {
     match /recipes/{id} {
       allow read, write: if request.auth != null;
     }
+    match /exercises/{id} {
+      allow read, write: if request.auth != null;
+    }
 
     // Global leaderboard — opt-in public profiles (name/photo) + daily scores,
     // visible to any signed-in user, writable only by their owner.

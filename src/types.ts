@@ -80,12 +80,24 @@ export interface Entry extends Macros {
   alcoholG?: number | null
 }
 
+/** shared exercise library — one doc per movement, frecency-ranked */
+export interface Exercise {
+  id: string
+  name: string
+  used?: number
+  lastUsed?: number
+}
+
 /** one set logged live in the gym */
 export interface WorkoutSet {
   id: string
   exercise: string
   weightKg?: number | null
   reps?: number | null
+  /** warm-up sets are excluded from working volume */
+  warmup?: boolean | null
+  /** taken to muscular failure */
+  toFailure?: boolean | null
 }
 
 export interface Workout {
