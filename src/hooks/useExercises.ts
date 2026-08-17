@@ -1,7 +1,7 @@
 // Shared exercise library — self-building: every saved set upserts its
 // exercise (slug-keyed, so the same movement never duplicates).
 import { useEffect, useState } from 'react'
-import { collection, doc, onSnapshot, orderBy, query, setDoc, increment } from 'firebase/firestore'
+import { collection, doc, getDoc, onSnapshot, orderBy, query, setDoc, updateDoc, increment } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import type { Exercise } from '../types'
 
@@ -21,16 +21,22 @@ export function useExercises() {
   return exercises
 }
 
-/** bump/create the used exercises after a workout save */
+/** bump/create the used exercises after a workout save — the FIRST spelling
+ *  becomes canonical; later saves only bump frecency, never rename */
 export async function bumpExercises(names: string[]) {
   const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))]
   await Promise.all(
-    unique.map((name) =>
-      setDoc(
-        doc(db, 'exercises', exerciseSlug(name)),
-        { name, used: increment(1), lastUsed: Date.now() },
-        { merge: true },
-      ),
-    ),
+    unique.map(async (name) => {
+      const ref = doc(db, 'exercises', exerciseSlug(name))
+      if ((await getDoc(ref)).exists()) {
+        await updateDoc(ref, { used: increment(1), lastUsed: Date.now() })
+      } else {
+        await setDoc(ref, { name, used: 1, lastUsed: Date.now() })
+      }
+    }),
   )
 }
+
+/** the library's spelling for a typed name, when the movement already exists */
+export const canonicalName = (typed: string, exercises: { id: string; name: string }[]): string =>
+  exercises.find((e) => e.id === exerciseSlug(typed))?.name ?? typed.trim()

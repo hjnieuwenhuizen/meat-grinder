@@ -8,7 +8,7 @@ import { MEALS, defaultMealNow } from '../lib/meals'
 import { WORKOUT_TYPES, DISTANCE_TYPES, STRENGTH_TYPES, workoutType, workoutTitle, workoutDetails, setsSummary, setsVolume, workingSets } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
-import { useExercises, bumpExercises } from '../hooks/useExercises'
+import { useExercises, bumpExercises, canonicalName } from '../hooks/useExercises'
 import { energyReadout, heroBands, applyFuel, kgPerWeek } from '../lib/coach'
 import type { BodyLog, DayDoc, Profile } from '../types'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
@@ -853,7 +853,8 @@ function WorkoutModal({ initial, exercises, onSave, onClose }: {
       .filter((s) => s.exercise.trim())
       .map((s) => ({
         id: s.id,
-        exercise: s.exercise.trim(),
+        // converge on the library's spelling so history groups cleanly
+        exercise: canonicalName(s.exercise, exercises),
         weightKg: Number(s.weightKg) > 0 ? Number(s.weightKg) : null,
         reps: Math.round(Number(s.reps)) > 0 ? Math.round(Number(s.reps)) : null,
         warmup: s.warmup || null,

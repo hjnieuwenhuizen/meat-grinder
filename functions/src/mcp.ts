@@ -516,17 +516,28 @@ const sanitizeSets = (sets: SetInput[]) =>
 const exerciseSlug = (name: string): string =>
   name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60)
 
-// self-building shared exercise library — mirrors the client's bumpExercises
+// self-building shared exercise library — mirrors the client's bumpExercises.
+// First spelling becomes canonical; later saves only bump frecency.
 const bumpExercises = async (names: string[]) => {
   const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))]
   await Promise.all(
-    unique.map((name) =>
-      db.doc(`exercises/${exerciseSlug(name)}`).set(
-        { name, used: FieldValue.increment(1), lastUsed: Date.now() },
-        { merge: true },
-      ),
-    ),
+    unique.map(async (name) => {
+      const ref = db.doc(`exercises/${exerciseSlug(name)}`)
+      if ((await ref.get()).exists) {
+        await ref.update({ used: FieldValue.increment(1), lastUsed: Date.now() })
+      } else {
+        await ref.set({ name, used: 1, lastUsed: Date.now() })
+      }
+    }),
   )
+}
+
+// converge typed names on the library's spelling so history groups cleanly
+const canonicalizeSets = async <T extends { exercise: string }>(sets: T[]): Promise<T[]> => {
+  const slugs = [...new Set(sets.map((x) => exerciseSlug(x.exercise)))]
+  const docs = await Promise.all(slugs.map((sl) => db.doc(`exercises/${sl}`).get()))
+  const canon = new Map(docs.filter((d) => d.exists).map((d) => [d.id, (d.data() as { name?: string }).name]))
+  return sets.map((x) => ({ ...x, exercise: canon.get(exerciseSlug(x.exercise)) ?? x.exercise }))
 }
 
 const exercisesPayload = async (query: string) => {
@@ -542,7 +553,7 @@ const exercisesPayload = async (query: string) => {
 const logSets = async (uid: string, input: LogSetsInput) => {
   const key = input.date && DATE_RX.test(input.date) ? input.date : localDateKey()
   const type = ['push', 'legs', 'pull', 'strength'].includes(input.type ?? '') ? (input.type as string) : 'strength'
-  const clean = sanitizeSets(input.sets)
+  const clean = await canonicalizeSets(sanitizeSets(input.sets))
   if (!clean.length) throw new Error('sets[] with at least one exercise is required')
   await bumpExercises(clean.map((x) => x.exercise))
 
@@ -614,7 +625,7 @@ const workoutUpdate = async (uid: string, date: string, workoutId: string, chang
   if (changes.meal && MEAL_IDS.includes(changes.meal)) w.meal = changes.meal
   if (changes.sets !== undefined) {
     // REPLACES all sets — send the complete corrected list
-    w.sets = sanitizeSets(changes.sets)
+    w.sets = await canonicalizeSets(sanitizeSets(changes.sets))
     await bumpExercises((w.sets as { exercise: string }[]).map((x) => x.exercise))
   }
   const settings = await loadSettings(uid)
