@@ -23,6 +23,29 @@ const DAY_TYPES: WorkoutTypeId[] = ['push', 'legs', 'pull']
 // distance makes sense for these
 export const DISTANCE_TYPES: WorkoutTypeId[] = ['run', 'walk', 'ride', 'swim', 'hike']
 
+// live set-logging applies to these
+export const STRENGTH_TYPES: WorkoutTypeId[] = ['push', 'legs', 'pull', 'strength']
+
+/** "Bench press 80×8, 80×8 · Squat 100×5" — grouped by exercise, in order */
+export const setsSummary = (w: Pick<Workout, 'sets'>): string => {
+  if (!w.sets?.length) return ''
+  const parts: string[] = []
+  let current = ''
+  for (const s of w.sets) {
+    const rep = `${s.weightKg ? `${s.weightKg}` : 'bw'}×${s.reps ?? '?'}`
+    if (s.exercise === current) parts[parts.length - 1] += `, ${rep}`
+    else {
+      current = s.exercise
+      parts.push(`${s.exercise} ${rep}`)
+    }
+  }
+  return parts.join(' · ')
+}
+
+/** total volume in kg (weight × reps over all sets) */
+export const setsVolume = (w: Pick<Workout, 'sets'>): number =>
+  (w.sets ?? []).reduce((v, s) => v + (s.weightKg ?? 0) * (s.reps ?? 0), 0)
+
 export const workoutType = (id: WorkoutTypeId) =>
   WORKOUT_TYPES.find((t) => t.id === id) ?? FALLBACK
 

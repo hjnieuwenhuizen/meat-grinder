@@ -1,7 +1,7 @@
 import { fmtLong, fmtDay } from './dates'
 import { fmtAmount } from './units'
 import { MEALS } from './meals'
-import { workoutTitle, workoutDetails } from './workouts'
+import { workoutTitle, workoutDetails, setsSummary, setsVolume } from './workouts'
 import { totalsOf, goalFor } from '../hooks/useData'
 import { scoreDay, stepsOf, MAX_POINTS } from './score'
 import { energyReadout, applyFuel } from './coach'
@@ -37,11 +37,11 @@ export function dayReport(key: string, day: DayDoc, settings: Settings): string 
           g.entries.length ? `${g.label} — ${line(totalsOf({ entries: g.entries }))}:` : `${g.label}:`,
           ...g.workouts
             .filter((w) => w.when !== 'after')
-            .map((w) => `- [Training, before ${g.label.toLowerCase()}] ${workoutTitle(w)}${workoutDetails(w) ? ` — ${workoutDetails(w)} (burn not counted in budget)` : ''}`),
+            .map((w) => `- [Training, before ${g.label.toLowerCase()}] ${workoutTitle(w)}${workoutDetails(w) ? ` — ${workoutDetails(w)} (burn not counted in budget)` : ''}${w.sets?.length ? ` | sets (${w.sets.length}, ${Math.round(setsVolume(w)).toLocaleString()} kg volume): ${setsSummary(w)}` : ''}`),
           ...g.entries.map((e) => `- ${e.alcohol ? '[Alcohol] ' : ''}${e.name}${fmtAmount(e) ? ` (${fmtAmount(e)})` : ''}: ${line(e)}`),
           ...g.workouts
             .filter((w) => w.when === 'after')
-            .map((w) => `- [Training, after ${g.label.toLowerCase()}] ${workoutTitle(w)}${workoutDetails(w) ? ` — ${workoutDetails(w)} (burn not counted in budget)` : ''}`),
+            .map((w) => `- [Training, after ${g.label.toLowerCase()}] ${workoutTitle(w)}${workoutDetails(w) ? ` — ${workoutDetails(w)} (burn not counted in budget)` : ''}${w.sets?.length ? ` | sets (${w.sets.length}, ${Math.round(setsVolume(w)).toLocaleString()} kg volume): ${setsSummary(w)}` : ''}`),
         ])
         .join('\n')
     : '- nothing logged'
@@ -116,7 +116,7 @@ export function rangeReport(
     const t = totalsOf(day)
     const tag = settings.trainingEnabled && day.training ? ' [training]' : ''
     const trained = day.workouts?.length
-      ? ` | trained: ${day.workouts.map((w) => `${workoutTitle(w)}${workoutDetails(w) ? ` (${workoutDetails(w)})` : ''}`).join(', ')}`
+      ? ` | trained: ${day.workouts.map((w) => `${workoutTitle(w)}${workoutDetails(w) ? ` (${workoutDetails(w)})` : ''}${w.sets?.length ? ` [${setsSummary(w)}]` : ''}`).join(', ')}`
       : ''
     const sleep = day.sleep ? ` | sleep ${day.sleep}h` : ''
     const body = day.body?.weightKg ? ` | weight ${day.body.weightKg}kg${day.body.bodyFatPct ? ` (${day.body.bodyFatPct}% bf)` : ''}` : ''

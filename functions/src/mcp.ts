@@ -199,6 +199,8 @@ const daySummary = (date: string, day: DayDoc, settings: Record<string, unknown>
       speedKmh: (w as { speedKmh?: number | null }).speedKmh ?? null,
       elevationGainM: (w as { elevM?: number | null }).elevM ?? null,
       runCadenceSpm: (w as { cadence?: number | null }).cadence ?? null,
+      // sets logged live in the gym: [{exercise, weightKg, reps}]
+      sets: (w as { sets?: unknown }).sets ?? null,
       slot: w.meal ?? null,
       when: w.when ?? null,
     })),
@@ -485,6 +487,68 @@ const libraryApply = async (uid: string, body: LibraryApplyBody) => {
     note: corrections.length && !entriesRewritten
       ? 'No diary entries matched the corrected food names — nothing retro-corrected.'
       : undefined,
+  }
+}
+
+/* ---------- gym: log sets live; the watch's activity merges in later ---------- */
+
+interface LogSetsInput {
+  date?: string
+  type?: string
+  sets: { exercise: string; weightKg?: number; reps?: number }[]
+}
+
+const logSets = async (uid: string, input: LogSetsInput) => {
+  const key = input.date && DATE_RX.test(input.date) ? input.date : localDateKey()
+  const type = ['push', 'legs', 'pull', 'strength'].includes(input.type ?? '') ? (input.type as string) : 'strength'
+  const clean = (input.sets ?? [])
+    .filter((x) => String(x.exercise ?? '').trim())
+    .slice(0, 50)
+    .map((x) => ({
+      id: crypto.randomUUID(),
+      exercise: String(x.exercise).trim().slice(0, 60),
+      weightKg: Number(x.weightKg) > 0 ? Number(x.weightKg) : null,
+      reps: Math.round(Number(x.reps)) > 0 ? Math.round(Number(x.reps)) : null,
+    }))
+  if (!clean.length) throw new Error('sets[] with at least one exercise is required')
+
+  const ref = db.doc(`users/${uid}/days/${key}`)
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...((await ref.get()).data() as Partial<DayDoc>) }
+  const settings = await loadSettings(uid)
+  // append to today's live strength card if one is open, else start one
+  const open = (day.workouts ?? []).find(
+    (w) => ['push', 'legs', 'pull', 'strength'].includes(w.type) && !(w as { garminId?: number }).garminId,
+  ) as (Record<string, unknown> & { sets?: unknown[] }) | undefined
+  let workout: Record<string, unknown>
+  if (open) {
+    open.sets = [...((open.sets as unknown[]) ?? []), ...clean]
+    workout = open
+  } else {
+    workout = {
+      id: crypto.randomUUID(),
+      type,
+      name: null,
+      duration: null,
+      kcal: null,
+      distance: null,
+      when: 'before',
+      meal: slotForNow(),
+      sets: clean,
+      startedAt: Date.now(),
+    }
+    day.workouts = [...(day.workouts ?? []), workout as never]
+  }
+  day.training = true
+  stampGoals(day, settings)
+  await ref.set(day)
+  const sets = (workout.sets as { weightKg?: number | null; reps?: number | null }[]) ?? []
+  return {
+    ok: true,
+    date: key,
+    workoutType: workout.type,
+    totalSets: sets.length,
+    volumeKg: Math.round(sets.reduce((v, x) => v + (x.weightKg ?? 0) * (x.reps ?? 0), 0)),
+    note: 'Sets saved. When the watch syncs its strength activity, it merges onto this same card (duration/kcal/HR attach; no duplicate).',
   }
 }
 
@@ -898,6 +962,10 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
   repeatable, addFood first so the whole family benefits (the library is shared).
 - Fix an entry: getDay (returns entry ids) → updateEntry (amount-only edits rescale macros)
   or deleteEntry.
+- GYM SESSIONS: the user logs sets LIVE with logSets ("bench 4x8 at 80" → one element per
+  set). Sets append to the day's open strength card; when the watch's strength activity
+  syncs later it MERGES onto that card (duration/kcal/HR attach — never a duplicate).
+  getDay workouts include sets[] — use them for volume, progression and PR coaching.
 - Weigh-in: logBody {weightKg, bodyFatPct?, muscleKg?}.
 - Reviews: getRange — check averages, compliance, energyBalance (logged days only,
   unlogged days are missing data, never assumed) and compare implied kg vs actual weight
@@ -1143,6 +1211,24 @@ function buildServer(uid: string): McpServer {
         'Stress-test the SHARED library: every food with computed kcal-vs-macros drift (4/4/9 + 7×alcohol), duplicate-name groups, missing-macro flags, and recipes with incomplete ingredient macros. Verify branded items against label knowledge, then PRESENT a cleanup plan to the user — only call library_apply after they explicitly confirm.',
     },
     async () => text(await libraryAudit(uid)),
+  )
+
+  server.registerTool(
+    'log_sets',
+    {
+      description:
+        "Log gym sets live during a session ('bench 4x8 at 80'). Appends to today's open strength card or starts one (type push/legs/pull/strength). When the user's watch syncs its strength activity afterwards, it MERGES onto the same card — duration/kcal/HR attach, no duplicate. Marks the day as a training day.",
+      inputSchema: {
+        sets: z.array(z.object({
+          exercise: z.string().min(1),
+          weightKg: z.number().positive().optional().describe('omit for bodyweight'),
+          reps: z.number().int().positive().optional(),
+        })).min(1).describe('One element per set — repeat the exercise name for each set'),
+        type: z.enum(['push', 'legs', 'pull', 'strength']).optional().describe("Defaults to 'strength'"),
+        date: z.string().regex(DATE_RX).optional().describe('YYYY-MM-DD, defaults to today'),
+      },
+    },
+    async (input) => text(await logSets(uid, input as LogSetsInput)),
   )
 
   server.registerTool(
@@ -1737,6 +1823,57 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/workout/sets': {
+      post: {
+        operationId: 'logSets',
+        summary:
+          "Log gym sets live ('bench 4x8@80'). Appends to today's open strength workout or starts one; the watch's strength activity later merges onto the same card (no duplicate). Marks the day as training.",
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sets'],
+                properties: {
+                  sets: {
+                    type: 'array',
+                    description: 'One element per set — repeat the exercise name for each set',
+                    items: {
+                      type: 'object',
+                      required: ['exercise'],
+                      properties: {
+                        exercise: { type: 'string' },
+                        weightKg: { type: 'number', description: 'omit for bodyweight' },
+                        reps: { type: 'integer' },
+                      },
+                    },
+                  },
+                  type: { type: 'string', enum: ['push', 'legs', 'pull', 'strength'] },
+                  date: { type: 'string', description: 'YYYY-MM-DD, defaults to today' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Saved',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' }, date: { type: 'string' }, workoutType: { type: 'string' },
+                    totalSets: { type: 'number' }, volumeKg: { type: 'number' }, note: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/library/audit': {
       get: {
         operationId: 'libraryAudit',
@@ -1897,6 +2034,14 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
   try {
     if (req.method === 'GET' && path === '/library/audit') {
       res.json(await libraryAudit(uid))
+      return
+    }
+    if (req.method === 'POST' && path === '/workout/sets') {
+      try {
+        res.json(await logSets(uid, body as unknown as LogSetsInput))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
       return
     }
     if (req.method === 'POST' && path === '/library/apply') {

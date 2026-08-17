@@ -80,9 +80,21 @@ export interface Entry extends Macros {
   alcoholG?: number | null
 }
 
+/** one set logged live in the gym */
+export interface WorkoutSet {
+  id: string
+  exercise: string
+  weightKg?: number | null
+  reps?: number | null
+}
+
 export interface Workout {
   id: string
   type: WorkoutTypeId
+  /** sets captured live in the gym — the Garmin activity merges onto this card later */
+  sets?: WorkoutSet[]
+  /** when live logging began — lets the Garmin sync time-match its activity */
+  startedAt?: number | null
   /** Garmin activity name, e.g. "Stair Stepper" — shown as the title when present */
   name?: string | null
   duration?: number | null

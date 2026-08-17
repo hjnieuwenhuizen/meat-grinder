@@ -5,7 +5,7 @@ import { scoreDay, stepsOf } from '../lib/score'
 import { todayKey, addDays, fmtLong } from '../lib/dates'
 import { isPer100, unitOf, amountOf, fmtAmount, basisLabel, scaleFor } from '../lib/units'
 import { MEALS, defaultMealNow } from '../lib/meals'
-import { WORKOUT_TYPES, DISTANCE_TYPES, workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
+import { WORKOUT_TYPES, DISTANCE_TYPES, STRENGTH_TYPES, workoutType, workoutTitle, workoutDetails, setsSummary, setsVolume } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
 import { energyReadout, heroBands, applyFuel, kgPerWeek } from '../lib/coach'
@@ -335,6 +335,12 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
                   {workoutType(w.type).icon} {workoutTitle(w)}
                 </div>
                 {workoutDetails(w) && <div className="mt-0.5 text-xs text-mist">{workoutDetails(w)}</div>}
+                {w.sets?.length ? (
+                  <div className="mt-0.5 text-xs text-mist">
+                    <span className="text-grind">{w.sets.length} set{w.sets.length > 1 ? 's' : ''}{setsVolume(w) > 0 ? ` · ${Math.round(setsVolume(w)).toLocaleString()} kg volume` : ''}</span>
+                    {' — '}{setsSummary(w)}
+                  </div>
+                ) : null}
               </button>
               <button
                 onClick={() => removeWorkout(w.id)}
@@ -757,6 +763,17 @@ function Rescue({ foods, pGap, kcalLeft, onAdd, onClose }: {
   )
 }
 
+const EXERCISES_KEY = 'mg-exercises'
+const knownExercises = (): string[] => {
+  try { return JSON.parse(localStorage.getItem(EXERCISES_KEY) ?? '[]') as string[] } catch { return [] }
+}
+const rememberExercises = (names: string[]) => {
+  const merged = [...new Set([...names, ...knownExercises()])].slice(0, 200)
+  localStorage.setItem(EXERCISES_KEY, JSON.stringify(merged))
+}
+
+type SetDraft = { id: string; exercise: string; weightKg: string; reps: string }
+
 function WorkoutModal({ initial, onSave, onClose }: {
   initial: Workout | null
   onSave: (w: Workout) => void
@@ -770,12 +787,34 @@ function WorkoutModal({ initial, onSave, onClose }: {
     when: (initial?.when ?? 'before') as 'before' | 'after',
     meal: initial ? initial.meal ?? null : defaultMealNow(),
   })
+  const [sets, setSets] = useState<SetDraft[]>(
+    (initial?.sets ?? []).map((s) => ({
+      id: s.id, exercise: s.exercise,
+      weightKg: s.weightKg ? String(s.weightKg) : '',
+      reps: s.reps ? String(s.reps) : '',
+    })),
+  )
   const set = (k: 'duration' | 'kcal' | 'distance') =>
     (e: React.ChangeEvent<HTMLInputElement>) => setW({ ...w, [k]: e.target.value })
 
   const hasDistance = DISTANCE_TYPES.includes(w.type)
+  const lifting = STRENGTH_TYPES.includes(w.type)
+
+  const editSet = (id: string, k: 'exercise' | 'weightKg' | 'reps', v: string) =>
+    setSets(sets.map((s) => (s.id === id ? { ...s, [k]: v } : s)))
+  const addSet = (from?: SetDraft) =>
+    setSets([...sets, { id: crypto.randomUUID(), exercise: from?.exercise ?? '', weightKg: from?.weightKg ?? '', reps: from?.reps ?? '' }])
 
   const submit = () => {
+    const cleanSets = sets
+      .filter((s) => s.exercise.trim())
+      .map((s) => ({
+        id: s.id,
+        exercise: s.exercise.trim(),
+        weightKg: Number(s.weightKg) > 0 ? Number(s.weightKg) : null,
+        reps: Math.round(Number(s.reps)) > 0 ? Math.round(Number(s.reps)) : null,
+      }))
+    if (cleanSets.length) rememberExercises(cleanSets.map((s) => s.exercise))
     onSave({
       // spread first so Garmin metadata (name, HR, pace, …) survives an edit
       ...(initial ?? {}),
@@ -786,6 +825,9 @@ function WorkoutModal({ initial, onSave, onClose }: {
       distance: hasDistance ? Number(w.distance) || null : null,
       when: w.when,
       meal: w.meal,
+      sets: lifting ? cleanSets : [],
+      // timestamp lets the Garmin sync time-match its strength activity later
+      startedAt: initial?.startedAt ?? Date.now(),
     })
     onClose()
   }
@@ -811,6 +853,51 @@ function WorkoutModal({ initial, onSave, onClose }: {
             </button>
           ))}
         </div>
+        {lifting && (
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wider text-mist">Sets</span>
+              <span className="text-[10px] text-mist/70">your watch's session merges onto this card when it syncs</span>
+            </div>
+            <datalist id="mg-exercise-list">
+              {knownExercises().map((n) => <option key={n} value={n} />)}
+            </datalist>
+            <div className="space-y-1.5">
+              {sets.map((s) => (
+                <div key={s.id} className="grid grid-cols-[1fr_64px_56px_28px] items-center gap-1.5">
+                  <input
+                    value={s.exercise} onChange={(e) => editSet(s.id, 'exercise', e.target.value)}
+                    placeholder="Bench press" list="mg-exercise-list"
+                    className="w-full rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-sm text-bone outline-none focus:border-grind/60"
+                  />
+                  <input
+                    value={s.weightKg} onChange={(e) => editSet(s.id, 'weightKg', e.target.value)}
+                    type="number" inputMode="decimal" step="0.5" placeholder="kg"
+                    className="w-full rounded-lg border border-edge bg-ink px-2 py-1.5 text-center text-sm text-bone outline-none focus:border-grind/60"
+                  />
+                  <input
+                    value={s.reps} onChange={(e) => editSet(s.id, 'reps', e.target.value)}
+                    type="number" inputMode="numeric" placeholder="reps"
+                    className="w-full rounded-lg border border-edge bg-ink px-2 py-1.5 text-center text-sm text-bone outline-none focus:border-grind/60"
+                  />
+                  <button type="button" onClick={() => setSets(sets.filter((x) => x.id !== s.id))} className="p-1 text-mist hover:text-over">
+                    <Trash className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-1.5 flex gap-2">
+              <button type="button" onClick={() => addSet()} className="rounded-full border border-edge px-3 py-1 text-xs font-medium text-mist hover:text-bone">
+                + Add set
+              </button>
+              {sets.length > 0 && (
+                <button type="button" onClick={() => addSet(sets[sets.length - 1])} className="rounded-full border border-grind/50 px-3 py-1 text-xs font-semibold text-grind hover:bg-grind-soft">
+                  ↻ Same again
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         <div className={`grid gap-3 ${hasDistance ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <Field label="Minutes" type="number" inputMode="decimal" value={w.duration} onChange={set('duration')} placeholder="45" />
           <Field label="Kcal burned" type="number" inputMode="decimal" value={w.kcal} onChange={set('kcal')} placeholder="320" />
@@ -818,7 +905,11 @@ function WorkoutModal({ initial, onSave, onClose }: {
             <Field label="Distance (km)" type="number" inputMode="decimal" step="0.1" value={w.distance} onChange={set('distance')} placeholder="5.2" />
           )}
         </div>
-        <p className="text-xs text-mist">From your watch — shown for the record, never added back to your calorie budget.</p>
+        <p className="text-xs text-mist">
+          {lifting
+            ? 'Minutes/kcal are optional — leave them blank and the watch fills them in when it syncs. Burn is never added back to your budget.'
+            : 'From your watch — shown for the record, never added back to your calorie budget.'}
+        </p>
         <div>
           <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-mist">When</span>
           <div className="mb-2 flex gap-1 rounded-full border border-edge bg-ink p-1">

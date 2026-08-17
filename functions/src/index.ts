@@ -23,10 +23,21 @@ type WorkoutTypeId =
   | 'run' | 'walk' | 'ride' | 'swim' | 'hike' | 'stairs' | 'cardio'
   | 'other'
 
+interface WorkoutSet {
+  id: string
+  exercise: string
+  weightKg?: number | null
+  reps?: number | null
+}
+
 interface Workout {
   id: string
   garminId?: number
   type: WorkoutTypeId
+  /** sets captured live in the app — the Garmin activity merges onto this card */
+  sets?: WorkoutSet[]
+  /** when live logging began, for time-matching the Garmin activity */
+  startedAt?: number | null
   name: string | null
   duration: number | null
   kcal: number | null
@@ -312,6 +323,31 @@ async function syncUser(uid: string, full = false, trigger = 'manual'): Promise<
         logger.info(`Backfilled metrics ${dateKey}: ${act.activityId}`)
       }
       continue
+    }
+
+    // sets logged live in the app during this session? MERGE the watch's
+    // activity onto that card (time-matched within 3h) instead of duplicating
+    const STRENGTH: WorkoutTypeId[] = ['push', 'legs', 'pull', 'strength']
+    if (STRENGTH.includes(type)) {
+      const actStart = new Date(start.replace(' ', 'T')).getTime()
+      const manual = day.workouts.find(
+        (w) =>
+          !w.garminId &&
+          STRENGTH.includes(w.type) &&
+          w.sets?.length &&
+          (!w.startedAt || Math.abs(w.startedAt - actStart) < 3 * 3600_000),
+      )
+      if (manual) {
+        manual.garminId = act.activityId
+        manual.name = act.activityName?.trim() || manual.name || null
+        if (act.duration) manual.duration = Math.round(act.duration / 60)
+        if (act.calories) manual.kcal = Math.round(act.calories)
+        Object.assign(manual, metrics)
+        day._dirty = true
+        workoutsAdded++
+        logger.info(`Merged Garmin strength ${act.activityId} into live-logged sets ${dateKey}`)
+        continue
+      }
     }
 
     const hour = Number(start.slice(11, 13)) + Number(start.slice(14, 16)) / 60

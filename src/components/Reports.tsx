@@ -3,7 +3,7 @@ import { fmtAmount } from '../lib/units'
 import { stepsOf } from '../lib/score'
 import { energyReadout, applyFuel, KCAL_PER_KG } from '../lib/coach'
 import type { Profile } from '../types'
-import { workoutType, workoutTitle, workoutDetails } from '../lib/workouts'
+import { workoutType, workoutTitle, workoutDetails, setsSummary } from '../lib/workouts'
 import { fetchDays, totalsOf, goalFor } from '../hooks/useData'
 import { todayKey, addDays, startOfWeek, weekKeys, monthKeys, fromKey, fmtDay, fmtMonth } from '../lib/dates'
 import { rangeReport } from '../lib/llm'
@@ -322,9 +322,12 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                         </div>
                       )}
                       {(day.workouts ?? []).map((w) => (
-                        <div key={w.id} className="flex items-center justify-between text-xs text-grind">
-                          <span>{workoutType(w.type).icon} {workoutTitle(w)}</span>
-                          <span className="tabular-nums text-mist">{workoutDetails(w)}</span>
+                        <div key={w.id}>
+                          <div className="flex items-center justify-between text-xs text-grind">
+                            <span>{workoutType(w.type).icon} {workoutTitle(w)}</span>
+                            <span className="tabular-nums text-mist">{workoutDetails(w)}</span>
+                          </div>
+                          {w.sets?.length ? <div className="text-[11px] text-mist">{setsSummary(w)}</div> : null}
                         </div>
                       ))}
                       {day.entries.map((e) => (
