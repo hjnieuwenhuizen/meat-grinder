@@ -1,4 +1,4 @@
-import type { Workout, WorkoutTypeId } from '../types'
+import type { Workout, WorkoutSet, WorkoutTypeId } from '../types'
 
 export const WORKOUT_TYPES: { id: WorkoutTypeId; label: string; icon: string }[] = [
   { id: 'push', label: 'Push', icon: '🏋️' },
@@ -26,13 +26,34 @@ export const DISTANCE_TYPES: WorkoutTypeId[] = ['run', 'walk', 'ride', 'swim', '
 // live set-logging applies to these
 export const STRENGTH_TYPES: WorkoutTypeId[] = ['push', 'legs', 'pull', 'strength']
 
-/** "Bench press 80×8, 80×8 · Squat 100×5" — grouped by exercise, in order */
+const isWarmup = (s: Pick<WorkoutSet, 'warmup' | 'setType'>): boolean =>
+  Boolean(s.warmup) || s.setType === 'warmup'
+
+/** external load moved in one set — the only number tonnage may count.
+ *  Bodyweight/assisted sets contribute 0 (assistance is help, not load);
+ *  per-hand loads (dumbbells) count both hands. */
+export const setLoadKg = (s: WorkoutSet): number => {
+  if (isWarmup(s)) return 0
+  if (s.loadType === 'bodyweight' || s.loadType === 'assistance') return 0
+  return (s.weightKg ?? 0) * (s.loadPerHand ? 2 : 1) * (s.reps ?? 0)
+}
+
+const setLabel = (s: WorkoutSet): string => {
+  const load =
+    s.loadType === 'assistance' ? `asst${s.assistanceKg ?? s.weightKg ?? '?'}`
+    : s.loadType === 'bodyweight' || (!s.weightKg && !s.assistanceKg) ? 'bw'
+    : `${s.weightKg}${s.loadPerHand ? '/hand' : ''}`
+  const flags = `${isWarmup(s) ? 'ᵂ' : ''}${s.setType === 'drop' ? 'ᵈ' : ''}${s.toFailure ? '!' : ''}${s.rir != null ? `@${s.rir}RIR` : ''}`
+  return `${load}×${s.reps ?? '?'}${flags}`
+}
+
+/** "Bench press 80×8, 80×8 · Dips asst9×14 · DB Press 35/hand×8" */
 export const setsSummary = (w: Pick<Workout, 'sets'>): string => {
   if (!w.sets?.length) return ''
   const parts: string[] = []
   let current = ''
   for (const s of w.sets) {
-    const rep = `${s.weightKg ? `${s.weightKg}` : 'bw'}×${s.reps ?? '?'}${s.warmup ? 'ᵂ' : ''}${s.toFailure ? '!' : ''}`
+    const rep = setLabel(s)
     if (s.exercise === current) parts[parts.length - 1] += `, ${rep}`
     else {
       current = s.exercise
@@ -42,13 +63,13 @@ export const setsSummary = (w: Pick<Workout, 'sets'>): string => {
   return parts.join(' · ')
 }
 
-/** working volume in kg (weight × reps, warm-up sets excluded) */
+/** working external volume in kg — see setLoadKg for the semantics */
 export const setsVolume = (w: Pick<Workout, 'sets'>): number =>
-  (w.sets ?? []).reduce((v, s) => v + (s.warmup ? 0 : (s.weightKg ?? 0) * (s.reps ?? 0)), 0)
+  (w.sets ?? []).reduce((v, s) => v + setLoadKg(s), 0)
 
 /** working (non-warm-up) set count */
 export const workingSets = (w: Pick<Workout, 'sets'>): number =>
-  (w.sets ?? []).filter((s) => !s.warmup).length
+  (w.sets ?? []).filter((s) => !isWarmup(s)).length
 
 export const workoutType = (id: WorkoutTypeId) =>
   WORKOUT_TYPES.find((t) => t.id === id) ?? FALLBACK

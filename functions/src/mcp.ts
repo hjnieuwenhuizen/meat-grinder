@@ -6,7 +6,7 @@
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions'
 import { getApps, initializeApp } from 'firebase-admin/app'
-import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue, FieldPath } from 'firebase-admin/firestore'
 import * as crypto from 'crypto'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -493,7 +493,48 @@ const libraryApply = async (uid: string, body: LibraryApplyBody) => {
 
 /* ---------- gym: log sets live; the watch's activity merges in later ---------- */
 
-interface SetInput { exercise: string; weightKg?: number; reps?: number; warmup?: boolean; toFailure?: boolean }
+interface SetInput {
+  exercise: string
+  weightKg?: number
+  reps?: number
+  warmup?: boolean
+  toFailure?: boolean
+  setType?: string
+  parentSetId?: string
+  loadType?: string
+  assistanceKg?: number
+  equipment?: string
+  loadPerHand?: boolean
+  groupId?: string
+  groupType?: string
+  round?: number
+  rir?: number
+  rpe?: number
+  tempo?: string
+  note?: string
+}
+
+const SET_TYPES = ['warmup', 'working', 'drop', 'backoff']
+const LOAD_TYPES = ['external', 'bodyweight', 'assistance']
+const EQUIPMENT = ['barbell', 'dumbbell', 'machine', 'cable', 'bodyweight', 'other']
+const GROUP_TYPES = ['superset', 'tri-set', 'giant-set', 'circuit']
+
+type CleanSet = ReturnType<typeof sanitizeSets>[number]
+
+// external load moved in one set — warm-ups and bodyweight/assisted sets
+// contribute 0 tonnage (assistance is help, not load); per-hand counts both
+const setLoadKg = (s: { warmup?: boolean | null; setType?: string | null; loadType?: string | null; weightKg?: number | null; loadPerHand?: boolean | null; reps?: number | null }): number => {
+  if (s.warmup || s.setType === 'warmup') return 0
+  if (s.loadType === 'bodyweight' || s.loadType === 'assistance') return 0
+  return (s.weightKg ?? 0) * (s.loadPerHand ? 2 : 1) * (s.reps ?? 0)
+}
+
+const setLabel = (s: { loadType?: string | null; assistanceKg?: number | null; weightKg?: number | null; loadPerHand?: boolean | null; reps?: number | null }): string =>
+  s.loadType === 'assistance'
+    ? `asst ${s.assistanceKg ?? '?'}kg×${s.reps ?? '?'}`
+    : s.loadType === 'bodyweight' || (!s.weightKg && !s.assistanceKg)
+      ? `bw×${s.reps ?? '?'}`
+      : `${s.weightKg}kg${s.loadPerHand ? '/hand' : ''}×${s.reps ?? '?'}`
 interface LogSetsInput {
   date?: string
   type?: string
@@ -503,15 +544,32 @@ interface LogSetsInput {
 const sanitizeSets = (sets: SetInput[]) =>
   (sets ?? [])
     .filter((x) => String(x.exercise ?? '').trim())
-    .slice(0, 50)
-    .map((x) => ({
-      id: crypto.randomUUID(),
-      exercise: String(x.exercise).trim().slice(0, 60),
-      weightKg: Number(x.weightKg) > 0 ? Number(x.weightKg) : null,
-      reps: Math.round(Number(x.reps)) > 0 ? Math.round(Number(x.reps)) : null,
-      warmup: x.warmup ? true : null,
-      toFailure: x.toFailure ? true : null,
-    }))
+    .slice(0, 80)
+    .map((x) => {
+      const setType = SET_TYPES.includes(x.setType ?? '') ? x.setType! : null
+      return {
+        id: crypto.randomUUID(),
+        exercise: String(x.exercise).trim().slice(0, 60),
+        weightKg: Number(x.weightKg) > 0 ? Number(x.weightKg) : null,
+        reps: Math.round(Number(x.reps)) > 0 ? Math.round(Number(x.reps)) : null,
+        // warmup flag and setType stay in lockstep so old clients keep working
+        warmup: x.warmup || setType === 'warmup' ? true : null,
+        toFailure: x.toFailure ? true : null,
+        setType: setType ?? (x.warmup ? 'warmup' : null),
+        parentSetId: x.parentSetId ? String(x.parentSetId).slice(0, 40) : null,
+        loadType: LOAD_TYPES.includes(x.loadType ?? '') ? x.loadType! : null,
+        assistanceKg: Number(x.assistanceKg) > 0 ? Number(x.assistanceKg) : null,
+        equipment: EQUIPMENT.includes(x.equipment ?? '') ? x.equipment! : null,
+        loadPerHand: x.loadPerHand ? true : null,
+        groupId: x.groupId ? String(x.groupId).slice(0, 40) : null,
+        groupType: GROUP_TYPES.includes(x.groupType ?? '') ? x.groupType! : null,
+        round: Math.round(Number(x.round)) > 0 ? Math.round(Number(x.round)) : null,
+        rir: x.rir != null && Number(x.rir) >= 0 && Number(x.rir) <= 10 ? Number(x.rir) : null,
+        rpe: x.rpe != null && Number(x.rpe) >= 1 && Number(x.rpe) <= 10 ? Number(x.rpe) : null,
+        tempo: x.tempo ? String(x.tempo).slice(0, 30) : null,
+        note: x.note ? String(x.note).slice(0, 200) : null,
+      }
+    })
 
 const exerciseSlug = (name: string): string =>
   name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60)
@@ -532,12 +590,34 @@ const bumpExercises = async (names: string[]) => {
   )
 }
 
-// converge typed names on the library's spelling so history groups cleanly
-const canonicalizeSets = async <T extends { exercise: string }>(sets: T[]): Promise<T[]> => {
-  const slugs = [...new Set(sets.map((x) => exerciseSlug(x.exercise)))]
-  const docs = await Promise.all(slugs.map((sl) => db.doc(`exercises/${sl}`).get()))
-  const canon = new Map(docs.filter((d) => d.exists).map((d) => [d.id, (d.data() as { name?: string }).name]))
-  return sets.map((x) => ({ ...x, exercise: canon.get(exerciseSlug(x.exercise)) ?? x.exercise }))
+// converge typed names on the library's spelling (names AND aliases) so
+// history groups cleanly — and report how each name resolved
+interface ExerciseResolution { input: string; resolved: string; status: 'matched' | 'alias' | 'created' }
+const canonicalizeSets = async <T extends { exercise: string }>(
+  sets: T[],
+): Promise<{ sets: T[]; resolutions: ExerciseResolution[] }> => {
+  const snap = await db.collection('exercises').get()
+  const byName = new Map<string, string>()
+  const byAlias = new Map<string, string>()
+  snap.docs.forEach((d) => {
+    const data = d.data() as { name?: string; aliases?: string[] }
+    if (data.name) byName.set(d.id, data.name)
+    for (const a of data.aliases ?? []) if (data.name) byAlias.set(exerciseSlug(a), data.name)
+  })
+  const resolutions = new Map<string, ExerciseResolution>()
+  const out = sets.map((x) => {
+    const slug = exerciseSlug(x.exercise)
+    const named = byName.get(slug)
+    const aliased = byAlias.get(slug)
+    const resolved = named ?? aliased ?? x.exercise.trim()
+    resolutions.set(x.exercise, {
+      input: x.exercise,
+      resolved,
+      status: named ? 'matched' : aliased ? 'alias' : 'created',
+    })
+    return { ...x, exercise: resolved }
+  })
+  return { sets: out, resolutions: [...resolutions.values()] }
 }
 
 const exercisesPayload = async (query: string) => {
@@ -550,10 +630,62 @@ const exercisesPayload = async (query: string) => {
     .slice(0, 100)
 }
 
+type StoredSet = { exercise?: string; weightKg?: number | null; reps?: number | null; warmup?: boolean | null; setType?: string | null; loadType?: string | null; assistanceKg?: number | null; loadPerHand?: boolean | null; rir?: number | null; rpe?: number | null }
+
+const bestSetOf = (sets: StoredSet[]): StoredSet | null => {
+  let best: StoredSet | null = null
+  for (const x of sets) {
+    if (x.warmup || x.setType === 'warmup') continue
+    if (!best) { best = x; continue }
+    if (x.loadType === 'assistance') {
+      // less assistance = stronger; tie-break on reps
+      const b = best.assistanceKg ?? Infinity
+      const c = x.assistanceKg ?? Infinity
+      if (c < b || (c === b && (x.reps ?? 0) > (best.reps ?? 0))) best = x
+    } else {
+      const b = (best.weightKg ?? 0) * (best.loadPerHand ? 2 : 1)
+      const c = (x.weightKg ?? 0) * (x.loadPerHand ? 2 : 1)
+      if (c > b || (c === b && (x.reps ?? 0) > (best.reps ?? 0))) best = x
+    }
+  }
+  return best
+}
+
+/** most recent earlier session per exercise: date, best set, working volume */
+const previousPerformance = async (uid: string, beforeDate: string, exercises: string[]) => {
+  if (!exercises.length) return []
+  const snap = await db
+    .collection(`users/${uid}/days`)
+    .orderBy(FieldPath.documentId(), 'desc')
+    .limit(60)
+    .get()
+  const out: Record<string, unknown>[] = []
+  const wanted = new Set(exercises)
+  for (const d of snap.docs) {
+    if (d.id >= beforeDate) continue
+    if (!wanted.size) break
+    const workouts = ((d.data() as Partial<DayDoc>).workouts ?? []) as { sets?: StoredSet[] }[]
+    for (const ex of [...wanted]) {
+      const sets = workouts.flatMap((w) => (w.sets ?? []).filter((x) => x.exercise === ex))
+      if (!sets.length) continue
+      const best = bestSetOf(sets)
+      out.push({
+        exercise: ex,
+        date: d.id,
+        bestSet: best ? setLabel(best) : null,
+        workingSets: sets.filter((x) => !x.warmup && x.setType !== 'warmup').length,
+        volumeKg: Math.round(sets.reduce((v, x) => v + setLoadKg(x), 0)),
+      })
+      wanted.delete(ex)
+    }
+  }
+  return out
+}
+
 const logSets = async (uid: string, input: LogSetsInput) => {
   const key = input.date && DATE_RX.test(input.date) ? input.date : localDateKey()
   const type = ['push', 'legs', 'pull', 'strength'].includes(input.type ?? '') ? (input.type as string) : 'strength'
-  const clean = await canonicalizeSets(sanitizeSets(input.sets))
+  const { sets: clean, resolutions } = await canonicalizeSets(sanitizeSets(input.sets))
   if (!clean.length) throw new Error('sets[] with at least one exercise is required')
   await bumpExercises(clean.map((x) => x.exercise))
 
@@ -586,16 +718,101 @@ const logSets = async (uid: string, input: LogSetsInput) => {
   day.training = true
   stampGoals(day, settings)
   await ref.set(day)
-  const sets = (workout.sets as { weightKg?: number | null; reps?: number | null; warmup?: boolean | null }[]) ?? []
+  const sets = (workout.sets as StoredSet[]) ?? []
+  const loggedExercises = [...new Set(clean.map((x) => x.exercise))]
+  const exerciseSummary = loggedExercises.map((ex) => {
+    const exSets = sets.filter((x) => x.exercise === ex)
+    const best = bestSetOf(exSets)
+    return {
+      exercise: ex,
+      sets: exSets.length,
+      workingSets: exSets.filter((x) => !x.warmup && x.setType !== 'warmup').length,
+      reps: exSets.reduce((r, x) => r + (x.reps ?? 0), 0),
+      volumeKg: Math.round(exSets.reduce((v, x) => v + setLoadKg(x), 0)),
+      bestSet: best ? setLabel(best) : null,
+    }
+  })
   return {
     ok: true,
     date: key,
+    workoutId: workout.id,
     workoutType: workout.type,
-    totalSets: sets.length,
-    workingSets: sets.filter((x) => !x.warmup).length,
-    volumeKg: Math.round(sets.reduce((v, x) => v + (x.warmup ? 0 : (x.weightKg ?? 0) * (x.reps ?? 0)), 0)),
+    exerciseResolution: resolutions,
+    exerciseSummary,
+    workoutSummary: {
+      totalSets: sets.length,
+      workingSets: sets.filter((x) => !x.warmup && x.setType !== 'warmup').length,
+      volumeKg: Math.round(sets.reduce((v, x) => v + setLoadKg(x), 0)),
+      note: 'volumeKg counts external load only — per-hand doubled, warm-ups and bodyweight/assisted sets excluded',
+    },
+    previousPerformance: await previousPerformance(uid, key, loggedExercises),
     note: 'Sets saved. When the watch syncs its strength activity, it merges onto this same card (duration/kcal/HR attach; no duplicate).',
   }
+}
+
+const workoutSummaryPayload = async (uid: string, date: string, workoutId?: string) => {
+  const day: DayDoc = { training: false, entries: [], workouts: [], ...((await db.doc(`users/${uid}/days/${date}`).get()).data() as Partial<DayDoc>) }
+  const candidates = (day.workouts ?? []).filter((w) => (w as { sets?: unknown[] }).sets?.length)
+  const w = (workoutId
+    ? (day.workouts ?? []).find((x) => (x as { id?: string }).id === workoutId)
+    : candidates[candidates.length - 1]) as (Record<string, unknown> & { sets?: StoredSet[] }) | undefined
+  if (!w) throw new Error(workoutId ? `No workout with id ${workoutId} on ${date}` : `No workout with sets on ${date}`)
+  const sets = w.sets ?? []
+  const byEx = new Map<string, StoredSet[]>()
+  sets.forEach((x) => {
+    const arr = byEx.get(x.exercise ?? '?') ?? []
+    arr.push(x)
+    byEx.set(x.exercise ?? '?', arr)
+  })
+  const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null)
+  const perExercise = [...byEx.entries()].map(([ex, exSets]) => {
+    const best = bestSetOf(exSets)
+    return {
+      exercise: ex,
+      sets: exSets.length,
+      workingSets: exSets.filter((x) => !x.warmup && x.setType !== 'warmup').length,
+      dropSets: exSets.filter((x) => x.setType === 'drop').length,
+      reps: exSets.reduce((r, x) => r + (x.reps ?? 0), 0),
+      volumeKg: Math.round(exSets.reduce((v, x) => v + setLoadKg(x), 0)),
+      bestSet: best ? setLabel(best) : null,
+      avgRir: avg(exSets.map((x) => x.rir).filter((x): x is number => x != null)),
+      avgRpe: avg(exSets.map((x) => x.rpe).filter((x): x is number => x != null)),
+    }
+  })
+  return {
+    date,
+    workoutId: (w as { id?: string }).id,
+    type: w.type,
+    durationMin: w.duration ?? null,
+    kcal: w.kcal ?? null,
+    avgHr: (w as { avgHr?: number | null }).avgHr ?? null,
+    exercises: byEx.size,
+    totalSets: sets.length,
+    warmupSets: sets.filter((x) => x.warmup || x.setType === 'warmup').length,
+    workingSets: sets.filter((x) => !x.warmup && x.setType !== 'warmup').length,
+    dropSets: sets.filter((x) => x.setType === 'drop').length,
+    totalReps: sets.reduce((r, x) => r + (x.reps ?? 0), 0),
+    externalVolumeKg: Math.round(sets.reduce((v, x) => v + setLoadKg(x), 0)),
+    bodyweightAssistedSets: sets.filter((x) => x.loadType === 'bodyweight' || x.loadType === 'assistance').length,
+    volumeNote: 'External load only: per-hand loads doubled; warm-ups, bodyweight and assisted sets excluded (assistance is help, not load — less assistance over time = progress).',
+    perExercise,
+    previousPerformance: await previousPerformance(uid, date, [...byEx.keys()]),
+  }
+}
+
+const exerciseUpdate = async (id: string, changes: { name?: string; addAliases?: string[] }) => {
+  const ref = db.doc(`exercises/${id}`)
+  const snap = await ref.get()
+  if (!snap.exists) throw new Error(`No exercise with id ${id} — get ids from list_exercises`)
+  const data = snap.data() as { aliases?: string[] }
+  const patch: Record<string, unknown> = {}
+  if (changes.name) patch.name = String(changes.name).trim().slice(0, 60)
+  if (changes.addAliases?.length) {
+    patch.aliases = [...new Set([...(data.aliases ?? []), ...changes.addAliases.map((a) => String(a).trim()).filter(Boolean)])].slice(0, 20)
+  }
+  if (!Object.keys(patch).length) throw new Error('Provide name and/or addAliases')
+  await ref.update(patch)
+  return { ok: true, id, ...patch }
 }
 
 interface WorkoutChanges {
@@ -625,8 +842,9 @@ const workoutUpdate = async (uid: string, date: string, workoutId: string, chang
   if (changes.meal && MEAL_IDS.includes(changes.meal)) w.meal = changes.meal
   if (changes.sets !== undefined) {
     // REPLACES all sets — send the complete corrected list
-    w.sets = await canonicalizeSets(sanitizeSets(changes.sets))
-    await bumpExercises((w.sets as { exercise: string }[]).map((x) => x.exercise))
+    const { sets: cleaned } = await canonicalizeSets(sanitizeSets(changes.sets))
+    w.sets = cleaned
+    await bumpExercises(cleaned.map((x) => x.exercise))
   }
   const settings = await loadSettings(uid)
   stampGoals(day, settings)
@@ -1055,13 +1273,21 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
 - Fix an entry: getDay (returns entry ids) → updateEntry (amount-only edits rescale macros)
   or deleteEntry.
 - GYM SESSIONS: the user logs sets LIVE with logSets ("bench 4x8 at 80" → one element per
-  set; warmup:true for warm-ups — excluded from working volume; toFailure:true when ground
-  to dust). ALWAYS listExercises first and reuse exact names so history groups cleanly (the
-  library is shared and self-building). Sets append to the day's open strength card; when
-  the watch's strength activity syncs later it MERGES onto that card (duration/kcal/HR
-  attach — never a duplicate). Fix mistakes with updateWorkout (sets REPLACES the whole
-  list) or deleteWorkout. getDay workouts include ids + sets[] — use them for volume,
-  progression and PR coaching.
+  set). ALWAYS listExercises first and reuse exact names (aliases resolve too; the response's
+  exerciseResolution tells you matched/alias/created — if 'created' looks like a variant
+  spelling, fix it with updateExercise addAliases). Sets append to the day's open strength
+  card; the watch's strength activity later MERGES onto that card — never a duplicate.
+  LOAD SEMANTICS (get these right or tonnage is fiction):
+  · Dumbbells: weightKg is PER HAND + loadPerHand:true (35kg DBs = 70kg moved per rep).
+  · Assisted dips/pull-ups: loadType:'assistance' + assistanceKg (help, NEVER volume;
+    less assistance over time = progress). Bodyweight moves: loadType:'bodyweight'.
+  · Warm-ups: setType:'warmup' (zero volume). Drop sets: setType:'drop' + parentSetId.
+  · Supersets/circuits: same groupId on every member + groupType + round.
+  · Effort/context: rir, rpe, toFailure, tempo ("3-1-1-1"), note ("slow eccentric").
+  logSets returns immediate context (per-exercise best set, workout tonnage, previous
+  session per exercise) so you can coach progressive overload without calling getDay.
+  getWorkoutSummary gives the full progression view. Fix mistakes with updateWorkout
+  (sets REPLACES the whole list) or deleteWorkout.
 - Weigh-in: logBody {weightKg, bodyFatPct?, muscleKg?}.
 - Reviews: getRange — check averages, compliance, energyBalance (logged days only,
   unlogged days are missing data, never assumed) and compare implied kg vs actual weight
@@ -1096,6 +1322,28 @@ const text = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON
 
 function buildServer(uid: string): McpServer {
   const server = new McpServer({ name: 'meat-grinder', version: '1.0.0' })
+
+  const zSet = z.object({
+    exercise: z.string().min(1).describe('Use exact names from list_exercises where possible'),
+    weightKg: z.number().positive().optional().describe('External load; for dumbbells set loadPerHand=true and give the PER-HAND weight'),
+    reps: z.number().int().positive().optional(),
+    warmup: z.boolean().optional().describe('legacy warm-up flag (same as setType=warmup)'),
+    toFailure: z.boolean().optional().describe('taken to muscular failure'),
+    setType: z.enum(['warmup', 'working', 'drop', 'backoff']).optional(),
+    parentSetId: z.string().optional().describe('the set this drop/backoff extends (id from get_day)'),
+    loadType: z.enum(['external', 'bodyweight', 'assistance']).optional().describe('assistance = machine-assisted (dips/pull-ups); assistanceKg is HELP, never counted as volume — less assistance over time = progress'),
+    assistanceKg: z.number().positive().optional(),
+    equipment: z.enum(['barbell', 'dumbbell', 'machine', 'cable', 'bodyweight', 'other']).optional(),
+    loadPerHand: z.boolean().optional().describe('weightKg is per hand — tonnage counts both hands (2×)'),
+    groupId: z.string().optional().describe('same id for all sets in a superset/circuit'),
+    groupType: z.enum(['superset', 'tri-set', 'giant-set', 'circuit']).optional(),
+    round: z.number().int().positive().optional().describe('round number within the group'),
+    rir: z.number().min(0).max(10).optional().describe('reps in reserve'),
+    rpe: z.number().min(1).max(10).optional(),
+    tempo: z.string().max(30).optional().describe('e.g. "3-1-1-1" or "slow"'),
+    note: z.string().max(200).optional().describe('e.g. "slow eccentric, hard squeeze"'),
+  })
+
 
   server.registerTool(
     'get_goals',
@@ -1323,16 +1571,37 @@ function buildServer(uid: string): McpServer {
         distanceKm: z.number().min(0).optional(),
         when: z.enum(['before', 'after']).optional(),
         meal: z.enum(['breakfast', 'snack1', 'lunch', 'snack2', 'supper', 'snack3']).optional(),
-        sets: z.array(z.object({
-          exercise: z.string().min(1),
-          weightKg: z.number().positive().optional(),
-          reps: z.number().int().positive().optional(),
-          warmup: z.boolean().optional(),
-          toFailure: z.boolean().optional(),
-        })).optional().describe('REPLACES all sets on the workout'),
+        sets: z.array(zSet).optional().describe('REPLACES all sets on the workout'),
       },
     },
     async ({ date, workoutId, ...changes }) => text(await workoutUpdate(uid, date, workoutId, changes as WorkoutChanges)),
+  )
+
+  server.registerTool(
+    'get_workout_summary',
+    {
+      description:
+        "Progression view of a gym session: per-exercise sets/reps/volume/best set/avg RIR-RPE, workout totals by set type, honest external tonnage (per-hand doubled; warm-ups, bodyweight and assisted sets excluded), plus each exercise's previous session for comparison. Omit workoutId for the day's last sets-workout.",
+      inputSchema: {
+        date: z.string().regex(DATE_RX),
+        workoutId: z.string().optional(),
+      },
+    },
+    async ({ date, workoutId }) => text(await workoutSummaryPayload(uid, date, workoutId)),
+  )
+
+  server.registerTool(
+    'update_exercise',
+    {
+      description:
+        'Rename a library exercise or add aliases so variant names ("Pec Deck", "Rope Pushdown") resolve to one canonical movement and history never fragments. Get ids from list_exercises.',
+      inputSchema: {
+        id: z.string().min(1),
+        name: z.string().min(1).optional(),
+        addAliases: z.array(z.string().min(1)).optional(),
+      },
+    },
+    async ({ id, ...changes }) => text(await exerciseUpdate(id, changes)),
   )
 
   server.registerTool(
@@ -1359,13 +1628,7 @@ function buildServer(uid: string): McpServer {
       description:
         "Log gym sets live during a session ('bench 4x8 at 80'). Appends to today's open strength card or starts one (type push/legs/pull/strength). When the user's watch syncs its strength activity afterwards, it MERGES onto the same card — duration/kcal/HR attach, no duplicate. Marks the day as a training day.",
       inputSchema: {
-        sets: z.array(z.object({
-          exercise: z.string().min(1),
-          weightKg: z.number().positive().optional().describe('omit for bodyweight'),
-          reps: z.number().int().positive().optional(),
-          warmup: z.boolean().optional().describe('warm-up set — excluded from working volume'),
-          toFailure: z.boolean().optional().describe('taken to muscular failure'),
-        })).min(1).describe('One element per set — repeat the exercise name for each set'),
+        sets: z.array(zSet).min(1).describe('One element per set — repeat the exercise name for each set'),
         type: z.enum(['push', 'legs', 'pull', 'strength']).optional().describe("Defaults to 'strength'"),
         date: z.string().regex(DATE_RX).optional().describe('YYYY-MM-DD, defaults to today'),
       },
@@ -2013,11 +2276,24 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
                     type: 'array',
                     description: 'REPLACES all sets on the workout',
                     items: { type: 'object', required: ['exercise'], properties: {
-                        exercise: { type: 'string' },
-                        weightKg: { type: 'number', description: 'omit for bodyweight' },
+                        exercise: { type: 'string', description: 'Use exact names from listExercises' },
+                        weightKg: { type: 'number', description: 'External load; for dumbbells set loadPerHand=true and give the PER-HAND weight' },
                         reps: { type: 'integer' },
-                        warmup: { type: 'boolean', description: 'excluded from working volume' },
+                        warmup: { type: 'boolean', description: 'legacy flag — same as setType=warmup' },
                         toFailure: { type: 'boolean' },
+                        setType: { type: 'string', enum: ['warmup', 'working', 'drop', 'backoff'] },
+                        parentSetId: { type: 'string', description: 'set this drop/backoff extends' },
+                        loadType: { type: 'string', enum: ['external', 'bodyweight', 'assistance'], description: 'assistanceKg is help, never volume' },
+                        assistanceKg: { type: 'number' },
+                        equipment: { type: 'string', enum: ['barbell', 'dumbbell', 'machine', 'cable', 'bodyweight', 'other'] },
+                        loadPerHand: { type: 'boolean', description: 'tonnage counts both hands (2×)' },
+                        groupId: { type: 'string', description: 'same id for all sets of a superset/circuit' },
+                        groupType: { type: 'string', enum: ['superset', 'tri-set', 'giant-set', 'circuit'] },
+                        round: { type: 'integer' },
+                        rir: { type: 'number' },
+                        rpe: { type: 'number' },
+                        tempo: { type: 'string', description: 'e.g. 3-1-1-1 or slow' },
+                        note: { type: 'string' },
                       } },
                   },
                 },
@@ -2047,6 +2323,50 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
       },
     },
+    '/workout/summary': {
+      get: {
+        operationId: 'getWorkoutSummary',
+        summary: "Progression view of a gym session: per-exercise sets/reps/volume/best set/avg RIR-RPE, totals by set type, honest external tonnage, and each exercise's previous session. Omit workoutId for the day's last sets-workout.",
+        parameters: [
+          { name: 'date', in: 'query', required: true, schema: { type: 'string' }, description: 'YYYY-MM-DD' },
+          { name: 'workoutId', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Workout summary',
+            content: { 'application/json': { schema: { type: 'object', properties: {
+              date: { type: 'string' }, workoutId: { type: 'string' }, type: { type: 'string' },
+              durationMin: { type: ['number', 'null'] }, kcal: { type: ['number', 'null'] }, avgHr: { type: ['number', 'null'] },
+              exercises: { type: 'number' }, totalSets: { type: 'number' }, warmupSets: { type: 'number' },
+              workingSets: { type: 'number' }, dropSets: { type: 'number' }, totalReps: { type: 'number' },
+              externalVolumeKg: { type: 'number' }, bodyweightAssistedSets: { type: 'number' },
+              volumeNote: { type: 'string' },
+              perExercise: { type: 'array', items: { type: 'object' } },
+              previousPerformance: { type: 'array', items: { type: 'object' } },
+            } } } },
+          },
+        },
+      },
+    },
+    '/exercise': {
+      patch: {
+        operationId: 'updateExercise',
+        summary: 'Rename an exercise or add aliases ("Pec Deck" → "Pec Fly") so history never fragments. Ids from listExercises.',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['id'], properties: {
+            id: { type: 'string' }, name: { type: 'string' },
+            addAliases: { type: 'array', items: { type: 'string' } },
+          } } } },
+        },
+        responses: {
+          '200': { description: 'Updated', content: { 'application/json': { schema: { type: 'object', properties: {
+            ok: { type: 'boolean' }, id: { type: 'string' }, name: { type: 'string' },
+            aliases: { type: 'array', items: { type: 'string' } },
+          } } } } },
+        },
+      },
+    },
     '/workout/sets': {
       post: {
         operationId: 'logSets',
@@ -2067,11 +2387,24 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
                       type: 'object',
                       required: ['exercise'],
                       properties: {
-                        exercise: { type: 'string' },
-                        weightKg: { type: 'number', description: 'omit for bodyweight' },
+                        exercise: { type: 'string', description: 'Use exact names from listExercises' },
+                        weightKg: { type: 'number', description: 'External load; for dumbbells set loadPerHand=true and give the PER-HAND weight' },
                         reps: { type: 'integer' },
-                        warmup: { type: 'boolean', description: 'excluded from working volume' },
+                        warmup: { type: 'boolean', description: 'legacy flag — same as setType=warmup' },
                         toFailure: { type: 'boolean' },
+                        setType: { type: 'string', enum: ['warmup', 'working', 'drop', 'backoff'] },
+                        parentSetId: { type: 'string', description: 'set this drop/backoff extends' },
+                        loadType: { type: 'string', enum: ['external', 'bodyweight', 'assistance'], description: 'assistanceKg is help, never volume' },
+                        assistanceKg: { type: 'number' },
+                        equipment: { type: 'string', enum: ['barbell', 'dumbbell', 'machine', 'cable', 'bodyweight', 'other'] },
+                        loadPerHand: { type: 'boolean', description: 'tonnage counts both hands (2×)' },
+                        groupId: { type: 'string', description: 'same id for all sets of a superset/circuit' },
+                        groupType: { type: 'string', enum: ['superset', 'tri-set', 'giant-set', 'circuit'] },
+                        round: { type: 'integer' },
+                        rir: { type: 'number' },
+                        rpe: { type: 'number' },
+                        tempo: { type: 'string', description: 'e.g. 3-1-1-1 or slow' },
+                        note: { type: 'string' },
                       },
                     },
                   },
@@ -2084,14 +2417,21 @@ const openApiSchema = (host: string, pathKey: string | null = null) => ({
         },
         responses: {
           '200': {
-            description: 'Saved',
+            description: 'Saved, with immediate workout context — usually no getDay needed',
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
                   properties: {
-                    ok: { type: 'boolean' }, date: { type: 'string' }, workoutType: { type: 'string' },
-                    totalSets: { type: 'number' }, volumeKg: { type: 'number' }, note: { type: 'string' },
+                    ok: { type: 'boolean' }, date: { type: 'string' }, workoutId: { type: 'string' }, workoutType: { type: 'string' },
+                    exerciseResolution: { type: 'array', items: { type: 'object', properties: {
+                      input: { type: 'string' }, resolved: { type: 'string' },
+                      status: { type: 'string', enum: ['matched', 'alias', 'created'] },
+                    } } },
+                    exerciseSummary: { type: 'array', items: { type: 'object' } },
+                    workoutSummary: { type: 'object' },
+                    previousPerformance: { type: 'array', items: { type: 'object' } },
+                    note: { type: 'string' },
                   },
                 },
               },
@@ -2264,6 +2604,32 @@ export const api = onRequest({ region: REGION, memory: '256MiB', timeoutSeconds:
     }
     if (req.method === 'GET' && path === '/exercises') {
       res.json(await exercisesPayload(String(req.query.query ?? '')))
+      return
+    }
+    if (req.method === 'GET' && path === '/workout/summary') {
+      const date = String(req.query.date ?? '')
+      if (!DATE_RX.test(date)) {
+        res.status(400).json({ error: 'date (YYYY-MM-DD) query param is required' })
+        return
+      }
+      try {
+        res.json(await workoutSummaryPayload(uid, date, String(req.query.workoutId ?? '') || undefined))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
+      return
+    }
+    if (req.method === 'PATCH' && path === '/exercise') {
+      const { id, ...changes } = body as { id?: string; name?: string; addAliases?: string[] }
+      if (!id) {
+        res.status(400).json({ error: 'id is required — get ids from listExercises' })
+        return
+      }
+      try {
+        res.json(await exerciseUpdate(id, changes))
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message })
+      }
       return
     }
     if (req.method === 'PATCH' && path === '/workout') {

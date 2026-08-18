@@ -849,9 +849,13 @@ function WorkoutModal({ initial, exercises, onSave, onClose }: {
     }])
 
   const submit = () => {
+    // LLM-written detail (groups, RIR, tempo, load semantics, notes…) must
+    // survive a UI edit — spread the original set first, then the edited basics
+    const origById = new Map((initial?.sets ?? []).map((x) => [x.id, x]))
     const cleanSets = sets
       .filter((s) => s.exercise.trim())
       .map((s) => ({
+        ...(origById.get(s.id) ?? {}),
         id: s.id,
         // converge on the library's spelling so history groups cleanly
         exercise: canonicalName(s.exercise, exercises),

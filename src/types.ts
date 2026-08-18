@@ -84,20 +84,50 @@ export interface Entry extends Macros {
 export interface Exercise {
   id: string
   name: string
+  /** alternative names that resolve to this movement (e.g. "Pec Deck" → "Pec Fly") */
+  aliases?: string[]
   used?: number
   lastUsed?: number
 }
 
-/** one set logged live in the gym */
+export type SetType = 'warmup' | 'working' | 'drop' | 'backoff'
+export type LoadType = 'external' | 'bodyweight' | 'assistance'
+export type Equipment = 'barbell' | 'dumbbell' | 'machine' | 'cable' | 'bodyweight' | 'other'
+export type GroupType = 'superset' | 'tri-set' | 'giant-set' | 'circuit'
+
+/** one set logged live in the gym. Volume semantics (setsVolume):
+ *  warm-ups count 0; loadType bodyweight/assistance counts 0 external
+ *  (assistanceKg is help, not load); loadPerHand doubles weightKg. */
 export interface WorkoutSet {
   id: string
   exercise: string
   weightKg?: number | null
   reps?: number | null
-  /** warm-up sets are excluded from working volume */
+  /** warm-up sets are excluded from working volume (legacy flag; see setType) */
   warmup?: boolean | null
   /** taken to muscular failure */
   toFailure?: boolean | null
+  /** warmup | working | drop | backoff — supersedes the warmup flag */
+  setType?: SetType | null
+  /** the set this drop/backoff extends */
+  parentSetId?: string | null
+  /** external (default) | bodyweight | assistance */
+  loadType?: LoadType | null
+  /** machine assistance in kg — less assistance = stronger; never counted as volume */
+  assistanceKg?: number | null
+  equipment?: Equipment | null
+  /** weightKg is per hand (dumbbells) — external load per rep is 2× */
+  loadPerHand?: boolean | null
+  /** superset/circuit membership */
+  groupId?: string | null
+  groupType?: GroupType | null
+  round?: number | null
+  /** reps-in-reserve / rate of perceived exertion */
+  rir?: number | null
+  rpe?: number | null
+  /** e.g. "3-1-1-1" or "slow" */
+  tempo?: string | null
+  note?: string | null
 }
 
 export interface Workout {
