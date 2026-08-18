@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { fmtAmount } from '../lib/units'
 import { stepsOf } from '../lib/score'
-import { energyReadout, applyFuel, KCAL_PER_KG } from '../lib/coach'
+import { energyReadout, applyFuel, kcalInRange, KCAL_PER_KG } from '../lib/coach'
 import type { Profile } from '../types'
 import { workoutType, workoutTitle, workoutDetails, setsSummary } from '../lib/workouts'
 import { fetchDays, totalsOf, goalFor } from '../hooks/useData'
@@ -91,7 +91,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
     const t = totalsOf(day)
     return {
       protein: t.protein >= g.protein * 0.95,
-      kcal: t.kcal >= g.kcal * 0.9 && t.kcal <= g.kcal * 1.1,
+      kcal: kcalInRange(g.kcal, t.kcal, settings.profile, day),
     }
   }
 
@@ -249,7 +249,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                       style={{
                         height: `${h}%`,
                         background: surplus ? 'var(--color-over)'
-                          : ratio >= 0.9 && ratio <= 1.1 ? 'var(--color-grind)'
+                          : kcalInRange(g.kcal, t.kcal, settings.profile, day) ? 'var(--color-grind)'
                           : inPlay ? 'var(--color-mist)'
                           : 'var(--color-carbs)',
                         opacity: future ? 0.15 : inPlay ? 0.45 : 1,

@@ -1212,7 +1212,9 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
 1. PROTEIN IS MANDATORY: the one hard daily target. Overshooting is a win, never a warning.
    At BMI > 30 the per-kg target scales from ADJUSTED bodyweight (ideal + 40% of excess),
    not actual weight — 2.2 g/kg of a 127 kg body would be an absurd 280 g.
-2. CALORIES GOVERN THE DAY: judged against a ±10% band of the goal (green 90–110%).
+2. CALORIES GOVERN THE DAY: green = 90–110% of goal, PLUS (when cutting) any deeper
+   deficit that stays above the extreme line (burn − 1000 kcal) — undershooting a cut
+   only fails once it becomes under-fueling. Maintaining/bulking keep the strict band.
    Three thresholds, not two: above target but below estimated burn = a SMALLER DEFICIT
    than planned, not a surplus — never coach it as overeating. True surplus only when
    intake exceeds estimated expenditure.

@@ -217,6 +217,25 @@ export const energyReadout = (
   return { maintenance, exerciseKcal, watchKcal, eaten: Math.round(eatenKcal), delta, zone: zoneFor(delta), kgWeek: kgPerWeek(delta) }
 }
 
+/** Calorie compliance. In the band (90–110%) is always green. When CUTTING,
+ *  any deeper deficit that stays above the extreme line (burn − 1000) is
+ *  green too — undershooting a cut only fails once it becomes under-fueling.
+ *  Maintaining/bulking keep the symmetric band: under there = missed plan. */
+export const kcalInRange = (
+  goalKcal: number,
+  eatenKcal: number,
+  p: Profile | null | undefined,
+  day: Pick<DayDoc, 'workouts'> | null | undefined,
+): boolean => {
+  if (goalKcal <= 0) return false
+  const r = eatenKcal / goalKcal
+  if (r >= 0.9 && r <= 1.1) return true
+  if (r < 0.9 && p && p.goalRate < 0) {
+    return eatenKcal >= energyReadout(p, day, eatenKcal).maintenance - 1000
+  }
+  return false
+}
+
 /* ---------- endurance fueling layer ----------
  * A fixed training-day goal is fine for a gym session; it is nonsense for an
  * 18 km run. When a day's LOGGED exercise burn is large, the goal itself

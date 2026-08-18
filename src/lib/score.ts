@@ -1,7 +1,7 @@
 // Daily score for the family leaderboard. Percent-of-own-goal, so different
 // goals compete fairly. Pure — no Firestore here.
 import { totalsOf, goalFor } from '../hooks/useData'
-import { applyFuel } from './coach'
+import { applyFuel, kcalInRange } from './coach'
 import type { ChallengeMetric, DayDoc, ScoreBreakdown, ScoreDoc, Settings } from '../types'
 
 export const STEP_GOAL = 7000
@@ -17,7 +17,7 @@ export const stepsOf = (day: Pick<DayDoc, 'steps' | 'garmin' | 'health'> | null 
 export const SCORE_ITEMS: { key: keyof ScoreBreakdown; emoji: string; label: string; max: number }[] = [
   { key: 'logged', emoji: '📓', label: 'Logged food', max: 1 },
   { key: 'protein', emoji: '🥩', label: 'Protein target hit', max: 3 },
-  { key: 'kcal', emoji: '🟢', label: 'Calories in the green (90–110%)', max: 3 },
+  { key: 'kcal', emoji: '🟢', label: 'Calories in the green', max: 3 },
   { key: 'workout', emoji: '💪', label: 'Worked out', max: 2 },
   { key: 'steps', emoji: '👟', label: `${STEP_GOAL.toLocaleString()}+ steps`, max: 2 },
   { key: 'sleep', emoji: '😴', label: '7h+ sleep', max: 1 },
@@ -32,10 +32,9 @@ export function scoreDay(day: DayDoc, settings: Settings): { points: number; ste
   const totals = totalsOf(day)
   const logged = day.entries.length > 0
   const steps = stepsOf(day)
-  const ratio = goal.kcal > 0 ? totals.kcal / goal.kcal : 0
 
   const protein = logged && goal.protein > 0 && totals.protein >= goal.protein
-  const kcal = logged && ratio >= 0.9 && ratio <= 1.1
+  const kcal = logged && kcalInRange(goal.kcal, totals.kcal, settings.profile, day)
 
   const breakdown: ScoreBreakdown = {
     logged: logged ? 1 : 0,

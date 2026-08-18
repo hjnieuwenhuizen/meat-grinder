@@ -9,7 +9,7 @@ import { WORKOUT_TYPES, DISTANCE_TYPES, STRENGTH_TYPES, workoutType, workoutTitl
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
 import { useExercises, bumpExercises, canonicalName } from '../hooks/useExercises'
-import { energyReadout, heroBands, applyFuel, kgPerWeek } from '../lib/coach'
+import { energyReadout, heroBands, applyFuel, kgPerWeek, kcalInRange } from '../lib/coach'
 import type { BodyLog, DayDoc, Profile } from '../types'
 import { CopyButton, Modal, Field, Ring, Panel, Plus, Trash, ChevronLeft, ChevronRight } from './ui'
 import type { Entry, Exercise, Food, Macros, MealId, Settings, Workout, WorkoutTypeId } from '../types'
@@ -69,7 +69,9 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
   const readout = settings.profile ? energyReadout(settings.profile, day, totals.kcal) : null
   const surplus = readout ? totals.kcal > readout.maintenance : ratio > 1.1
   const kcalStatus =
-    ratio > 1.1 ? (surplus ? 'surplus' : 'trim') : ratio >= 0.9 ? 'good' : 'low'
+    ratio > 1.1
+      ? (surplus ? 'surplus' : 'trim')
+      : kcalInRange(goal.kcal, totals.kcal, settings.profile, day) ? 'good' : 'low'
   const kcalColor =
     kcalStatus === 'surplus' ? 'var(--color-over)'
     : kcalStatus === 'good' ? 'var(--color-grind)'
