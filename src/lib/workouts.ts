@@ -38,13 +38,51 @@ export const setLoadKg = (s: WorkoutSet): number => {
   return (s.weightKg ?? 0) * (s.loadPerHand ? 2 : 1) * (s.reps ?? 0)
 }
 
-const setLabel = (s: WorkoutSet): string => {
+export const setLabel = (s: WorkoutSet): string => {
   const load =
     s.loadType === 'assistance' ? `asst${s.assistanceKg ?? s.weightKg ?? '?'}`
     : s.loadType === 'bodyweight' || (!s.weightKg && !s.assistanceKg) ? 'bw'
     : `${s.weightKg}${s.loadPerHand ? '/hand' : ''}`
   const flags = `${isWarmup(s) ? 'ᵂ' : ''}${s.setType === 'drop' ? 'ᵈ' : ''}${s.toFailure ? '!' : ''}${s.rir != null ? `@${s.rir}RIR` : ''}`
   return `${load}×${s.reps ?? '?'}${flags}`
+}
+
+/** consecutive sets grouped per exercise, labels compressed ("35/hand×8 ×2") */
+export interface ExerciseGroup {
+  exercise: string
+  labels: string[]
+  sets: WorkoutSet[]
+  volumeKg: number
+  groupId?: string | null
+  groupType?: string | null
+}
+
+export const setsByExercise = (w: Pick<Workout, 'sets'>): ExerciseGroup[] => {
+  const groups: ExerciseGroup[] = []
+  for (const s of w.sets ?? []) {
+    const last = groups[groups.length - 1]
+    if (last && last.exercise === s.exercise) {
+      last.sets.push(s)
+      last.volumeKg += setLoadKg(s)
+    } else {
+      groups.push({ exercise: s.exercise, labels: [], sets: [s], volumeKg: setLoadKg(s), groupId: s.groupId, groupType: s.groupType })
+    }
+  }
+  for (const g of groups) {
+    // compress identical consecutive labels: "35/hand×8, 35/hand×8" → "35/hand×8 ×2"
+    const raw = g.sets.map(setLabel)
+    const out: string[] = []
+    let count = 0
+    for (let i = 0; i < raw.length; i++) {
+      count++
+      if (raw[i] !== raw[i + 1]) {
+        out.push(count > 1 ? `${raw[i]} ×${count}` : raw[i])
+        count = 0
+      }
+    }
+    g.labels = out
+  }
+  return groups
 }
 
 /** "Bench press 80×8, 80×8 · Dips asst9×14 · DB Press 35/hand×8" */

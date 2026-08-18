@@ -5,7 +5,7 @@ import { scoreDay, stepsOf } from '../lib/score'
 import { todayKey, addDays, fmtLong } from '../lib/dates'
 import { isPer100, unitOf, amountOf, fmtAmount, basisLabel, scaleFor } from '../lib/units'
 import { MEALS, defaultMealNow } from '../lib/meals'
-import { WORKOUT_TYPES, DISTANCE_TYPES, STRENGTH_TYPES, workoutType, workoutTitle, workoutDetails, setsSummary, setsVolume, workingSets } from '../lib/workouts'
+import { WORKOUT_TYPES, DISTANCE_TYPES, STRENGTH_TYPES, workoutType, workoutTitle, workoutDetails, setsByExercise, setsVolume, workingSets } from '../lib/workouts'
 import { dayReport } from '../lib/llm'
 import { useSyncing } from '../hooks/useSync'
 import { useExercises, bumpExercises, canonicalName } from '../hooks/useExercises'
@@ -338,9 +338,21 @@ export default function Today({ uid, settings, foods, addFood, updateFood, publi
                 </div>
                 {workoutDetails(w) && <div className="mt-0.5 text-xs text-mist">{workoutDetails(w)}</div>}
                 {w.sets?.length ? (
-                  <div className="mt-0.5 text-xs text-mist">
-                    <span className="text-grind">{workingSets(w)} working set{workingSets(w) === 1 ? '' : 's'}{setsVolume(w) > 0 ? ` · ${Math.round(setsVolume(w)).toLocaleString()} kg` : ''}</span>
-                    {' — '}{setsSummary(w)}
+                  <div className="mt-1 text-xs">
+                    <div className="mb-0.5 font-medium text-grind">
+                      {workingSets(w)} working set{workingSets(w) === 1 ? '' : 's'}{setsVolume(w) > 0 ? ` · ${Math.round(setsVolume(w)).toLocaleString()} kg` : ''}
+                    </div>
+                    <div className="space-y-px">
+                      {setsByExercise(w).map((g, gi) => (
+                        <div key={gi} className="flex items-baseline justify-between gap-3">
+                          <span className="truncate text-bone/90">
+                            {g.groupType ? <span className="mr-1 text-[9px] uppercase text-carbs" title={g.groupType}>⟳</span> : null}
+                            {g.exercise}
+                          </span>
+                          <span className="shrink-0 text-right tabular-nums text-mist">{g.labels.join(', ')}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </button>
@@ -766,7 +778,18 @@ function Rescue({ foods, pGap, kcalLeft, onAdd, onClose }: {
   )
 }
 
-type SetDraft = { id: string; exercise: string; weightKg: string; reps: string; warmup: boolean; toFailure: boolean }
+type SetDraft = {
+  id: string
+  exercise: string
+  weightKg: string
+  reps: string
+  warmup: boolean
+  toFailure: boolean
+  /** assisted sets edit assistance (help) instead of load */
+  assisted: boolean
+  perHand: boolean
+  drop: boolean
+}
 
 /** combobox over the shared exercise library — frecency first, filter as you type */
 function ExerciseInput({ value, onChange, exercises, autoFocus }: {
@@ -825,10 +848,15 @@ function WorkoutModal({ initial, exercises, onSave, onClose }: {
   const [sets, setSets] = useState<SetDraft[]>(
     (initial?.sets ?? []).map((s) => ({
       id: s.id, exercise: s.exercise,
-      weightKg: s.weightKg ? String(s.weightKg) : '',
+      weightKg: s.loadType === 'assistance'
+        ? (s.assistanceKg ? String(s.assistanceKg) : '')
+        : (s.weightKg ? String(s.weightKg) : ''),
       reps: s.reps ? String(s.reps) : '',
-      warmup: Boolean(s.warmup),
+      warmup: Boolean(s.warmup) || s.setType === 'warmup',
       toFailure: Boolean(s.toFailure),
+      assisted: s.loadType === 'assistance',
+      perHand: Boolean(s.loadPerHand),
+      drop: s.setType === 'drop',
     })),
   )
   const set = (k: 'duration' | 'kcal' | 'distance') =>
@@ -841,12 +869,30 @@ function WorkoutModal({ initial, exercises, onSave, onClose }: {
     setSets(sets.map((s) => (s.id === id ? { ...s, [k]: v } : s)))
   const toggleSet = (id: string, k: 'warmup' | 'toFailure') =>
     setSets(sets.map((s) => (s.id === id ? { ...s, [k]: !s[k] } : s)))
-  const addSet = (from?: SetDraft) =>
-    setSets([...sets, {
-      id: crypto.randomUUID(), exercise: from?.exercise ?? '',
-      weightKg: from?.weightKg ?? '', reps: from?.reps ?? '',
-      warmup: false, toFailure: false,
-    }])
+  const renameRun = (ids: string[], v: string) =>
+    setSets(sets.map((s) => (ids.includes(s.id) ? { ...s, exercise: v } : s)))
+  const removeRun = (ids: string[]) => setSets(sets.filter((s) => !ids.includes(s.id)))
+  const newDraft = (from?: SetDraft): SetDraft => ({
+    id: crypto.randomUUID(), exercise: from?.exercise ?? '',
+    weightKg: from?.weightKg ?? '', reps: from?.reps ?? '',
+    warmup: false, toFailure: false,
+    assisted: from?.assisted ?? false, perHand: from?.perHand ?? false, drop: false,
+  })
+  // insert directly after the run so exercise blocks stay contiguous
+  const addSetAfter = (afterId: string | null, from?: SetDraft) => {
+    const draft = newDraft(from)
+    if (!afterId) { setSets([...sets, draft]); return draft.id }
+    const i = sets.findIndex((s) => s.id === afterId)
+    setSets([...sets.slice(0, i + 1), draft, ...sets.slice(i + 1)])
+    return draft.id
+  }
+  // consecutive same-name runs = one exercise block
+  const runs: { exercise: string; items: SetDraft[] }[] = []
+  for (const d of sets) {
+    const last = runs[runs.length - 1]
+    if (last && last.exercise === d.exercise) last.items.push(d)
+    else runs.push({ exercise: d.exercise, items: [d] })
+  }
 
   const submit = () => {
     // LLM-written detail (groups, RIR, tempo, load semantics, notes…) must
@@ -854,16 +900,21 @@ function WorkoutModal({ initial, exercises, onSave, onClose }: {
     const origById = new Map((initial?.sets ?? []).map((x) => [x.id, x]))
     const cleanSets = sets
       .filter((s) => s.exercise.trim())
-      .map((s) => ({
-        ...(origById.get(s.id) ?? {}),
-        id: s.id,
-        // converge on the library's spelling so history groups cleanly
-        exercise: canonicalName(s.exercise, exercises),
-        weightKg: Number(s.weightKg) > 0 ? Number(s.weightKg) : null,
-        reps: Math.round(Number(s.reps)) > 0 ? Math.round(Number(s.reps)) : null,
-        warmup: s.warmup || null,
-        toFailure: s.toFailure || null,
-      }))
+      .map((s) => {
+        const n = Number(s.weightKg) > 0 ? Number(s.weightKg) : null
+        return {
+          ...(origById.get(s.id) ?? {}),
+          id: s.id,
+          // converge on the library's spelling so history groups cleanly
+          exercise: canonicalName(s.exercise, exercises),
+          // the weight column edits assistance on assisted sets, load otherwise
+          weightKg: s.assisted ? null : n,
+          assistanceKg: s.assisted ? n : (origById.get(s.id)?.assistanceKg ?? null),
+          reps: Math.round(Number(s.reps)) > 0 ? Math.round(Number(s.reps)) : null,
+          warmup: s.warmup || null,
+          toFailure: s.toFailure || null,
+        }
+      })
     if (cleanSets.length) void bumpExercises(cleanSets.map((s) => s.exercise)).catch(() => {})
     onSave({
       // spread first so Garmin metadata (name, HR, pace, …) survives an edit
@@ -909,64 +960,88 @@ function WorkoutModal({ initial, exercises, onSave, onClose }: {
               <span className="text-xs font-medium uppercase tracking-wider text-mist">Sets</span>
               <span className="text-[10px] text-mist/70">your watch's session merges onto this card when it syncs</span>
             </div>
-            <div className="space-y-1.5">
-              {sets.map((s, i) => (
-                <div key={s.id} className="grid grid-cols-[1fr_60px_52px_auto_26px] items-center gap-1.5 sm:grid-cols-[1fr_72px_60px_auto_28px]">
-                  <ExerciseInput
-                    value={s.exercise}
-                    onChange={(v) => editSet(s.id, 'exercise', v)}
-                    exercises={exercises}
-                    autoFocus={i === sets.length - 1 && !s.exercise}
-                  />
-                  <input
-                    value={s.weightKg} onChange={(e) => editSet(s.id, 'weightKg', e.target.value)}
-                    type="number" inputMode="decimal" step="0.5" placeholder="kg"
-                    className="w-full rounded-lg border border-edge bg-ink px-2 py-2 text-center text-base text-bone outline-none focus:border-grind/60 sm:text-sm"
-                  />
-                  <input
-                    value={s.reps} onChange={(e) => editSet(s.id, 'reps', e.target.value)}
-                    type="number" inputMode="numeric" placeholder="reps"
-                    className="w-full rounded-lg border border-edge bg-ink px-2 py-2 text-center text-base text-bone outline-none focus:border-grind/60 sm:text-sm"
-                  />
-                  <div className="flex gap-0.5">
-                    <button
-                      type="button" onClick={() => toggleSet(s.id, 'warmup')}
-                      title="Warm-up set — excluded from working volume"
-                      className={`rounded-md border px-1.5 py-1 text-[10px] font-bold transition ${
-                        s.warmup ? 'border-carbs/60 bg-carbs/20 text-carbs' : 'border-edge text-mist/60 hover:text-bone'
-                      }`}
-                    >
-                      W
-                    </button>
-                    <button
-                      type="button" onClick={() => toggleSet(s.id, 'toFailure')}
-                      title="Taken to failure"
-                      className={`rounded-md border px-1.5 py-1 text-[10px] font-bold transition ${
-                        s.toFailure ? 'border-over/60 bg-over/20 text-over' : 'border-edge text-mist/60 hover:text-bone'
-                      }`}
-                    >
-                      F
+            <div className="space-y-2">
+              {runs.map((run, ri) => (
+                <div key={run.items[0].id} className="rounded-xl border border-edge bg-ink/40 p-2">
+                  <div className="mb-1.5 flex items-center gap-1.5">
+                    <div className="flex-1">
+                      <ExerciseInput
+                        value={run.exercise}
+                        onChange={(v) => renameRun(run.items.map((x) => x.id), v)}
+                        exercises={exercises}
+                        autoFocus={ri === runs.length - 1 && !run.exercise}
+                      />
+                    </div>
+                    {run.items.some((x) => x.perHand) && (
+                      <span className="rounded-md bg-raise px-1.5 py-0.5 text-[9px] font-semibold uppercase text-mist" title="Weight is per hand — volume counts both">/hand</span>
+                    )}
+                    {run.items.some((x) => x.assisted) && (
+                      <span className="rounded-md bg-raise px-1.5 py-0.5 text-[9px] font-semibold uppercase text-mist" title="Assisted — the number is help in kg, never volume">asst</span>
+                    )}
+                    <button type="button" onClick={() => removeRun(run.items.map((x) => x.id))} className="p-1 text-mist hover:text-over" title="Remove exercise">
+                      <Trash className="size-3.5" />
                     </button>
                   </div>
-                  <button type="button" onClick={() => setSets(sets.filter((x) => x.id !== s.id))} className="p-1 text-mist hover:text-over">
-                    <Trash className="size-3.5" />
+                  <div className="space-y-1">
+                    {run.items.map((s, si) => (
+                      <div key={s.id} className="grid grid-cols-[24px_1fr_1fr_auto_26px] items-center gap-1.5">
+                        <span className="text-center text-[10px] tabular-nums text-mist/60">{si + 1}</span>
+                        <input
+                          value={s.weightKg} onChange={(e) => editSet(s.id, 'weightKg', e.target.value)}
+                          type="number" inputMode="decimal" step="0.5"
+                          placeholder={s.assisted ? 'asst kg' : 'kg'}
+                          className="w-full rounded-lg border border-edge bg-ink px-2 py-2 text-center text-base text-bone outline-none focus:border-grind/60 sm:text-sm"
+                        />
+                        <input
+                          value={s.reps} onChange={(e) => editSet(s.id, 'reps', e.target.value)}
+                          type="number" inputMode="numeric" placeholder="reps"
+                          className="w-full rounded-lg border border-edge bg-ink px-2 py-2 text-center text-base text-bone outline-none focus:border-grind/60 sm:text-sm"
+                        />
+                        <div className="flex gap-0.5">
+                          <button
+                            type="button" onClick={() => toggleSet(s.id, 'warmup')}
+                            title="Warm-up set — excluded from working volume"
+                            className={`rounded-md border px-1.5 py-1 text-[10px] font-bold transition ${
+                              s.warmup ? 'border-carbs/60 bg-carbs/20 text-carbs' : 'border-edge text-mist/60 hover:text-bone'
+                            }`}
+                          >
+                            W
+                          </button>
+                          <button
+                            type="button" onClick={() => toggleSet(s.id, 'toFailure')}
+                            title="Taken to failure"
+                            className={`rounded-md border px-1.5 py-1 text-[10px] font-bold transition ${
+                              s.toFailure ? 'border-over/60 bg-over/20 text-over' : 'border-edge text-mist/60 hover:text-bone'
+                            }`}
+                          >
+                            F
+                          </button>
+                          {s.drop && <span className="rounded-md border border-edge px-1.5 py-1 text-[10px] font-bold text-carbs" title="Drop set">D</span>}
+                        </div>
+                        <button type="button" onClick={() => setSets(sets.filter((x) => x.id !== s.id))} className="p-1 text-mist hover:text-over">
+                          <Trash className="size-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addSetAfter(run.items[run.items.length - 1].id, run.items[run.items.length - 1])}
+                    className="mt-1.5 rounded-full border border-grind/40 px-3 py-1 text-[11px] font-semibold text-grind hover:bg-grind-soft"
+                  >
+                    ↻ Add set
                   </button>
                 </div>
               ))}
             </div>
-            <div className="mt-1.5 flex items-center gap-2">
-              <button type="button" onClick={() => addSet()} className="rounded-full border border-edge px-3 py-1.5 text-xs font-medium text-mist hover:text-bone">
-                + Add set
+            <div className="mt-2 flex items-center gap-2">
+              <button type="button" onClick={() => addSetAfter(null)} className="rounded-full border border-edge px-3 py-1.5 text-xs font-medium text-mist hover:text-bone">
+                + Exercise
               </button>
-              {sets.length > 0 && (
-                <button type="button" onClick={() => addSet(sets[sets.length - 1])} className="rounded-full border border-grind/50 px-3 py-1.5 text-xs font-semibold text-grind hover:bg-grind-soft">
-                  ↻ Same again
-                </button>
-              )}
               {sets.some((s) => s.exercise.trim()) && (
                 <span className="ml-auto text-[11px] tabular-nums text-mist">
                   {sets.filter((x) => x.exercise.trim() && !x.warmup).length} working ·{' '}
-                  {Math.round(sets.reduce((v, x) => v + (x.warmup ? 0 : (Number(x.weightKg) || 0) * (Number(x.reps) || 0)), 0)).toLocaleString()} kg
+                  {Math.round(sets.reduce((v, x) => v + (x.warmup || x.assisted ? 0 : (Number(x.weightKg) || 0) * (Number(x.reps) || 0) * (x.perHand ? 2 : 1)), 0)).toLocaleString()} kg
                 </span>
               )}
             </div>
