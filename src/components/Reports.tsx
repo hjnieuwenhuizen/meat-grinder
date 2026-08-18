@@ -95,14 +95,16 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
     }
   }
 
-  const compliance = logged.length
-    ? Math.round(
-        (logged
-          .map(hitsOf)
-          .reduce((n, h) => n + (h ? Number(h.protein) + Number(h.kcal) : 0), 0) /
-          (logged.length * 2)) * 100,
-      )
-    : null
+  // an unfinished day can still be fixed — it only counts against you once
+  // it's over (hits already earned today DO count for you)
+  const complianceDen = logged.filter((k) => k < todayKey()).length * 2
+    + (logged.includes(todayKey())
+      ? Number(hitsOf(todayKey())?.protein ?? 0) + Number(hitsOf(todayKey())?.kcal ?? 0)
+      : 0)
+  const complianceNum = logged
+    .map(hitsOf)
+    .reduce((n, h) => n + (h ? Number(h.protein) + Number(h.kcal) : 0), 0)
+  const compliance = complianceDen ? Math.round((complianceNum / complianceDen) * 100) : null
 
   const maxKcal = days
     ? Math.max(settings.rest.kcal, settings.training.kcal, ...keys.map((k) => totalsOf(days[k]).kcal))
@@ -198,19 +200,21 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                     {keys.map((k) => {
                       const h = hitsOf(k)
                       const future = k > todayKey()
+                      // today's missed targets are still in play — pending, not failed
+                      const pending = k === todayKey() && h != null && !h[hk]
                       return (
                         <div
                           key={k}
-                          title={fmtDay(k)}
+                          title={pending ? `${fmtDay(k)} — still in play` : fmtDay(k)}
                           className={`flex h-7 flex-1 items-center justify-center rounded text-xs font-bold ${
-                            future || !h
+                            future || !h || pending
                               ? 'bg-raise text-mist/40'
                               : h[hk]
                                 ? 'bg-grind-soft text-grind'
                                 : 'bg-over/15 text-over'
                           }`}
                         >
-                          {future ? '' : !h ? '·' : h[hk] ? '✓' : '✕'}
+                          {future ? '' : !h ? '·' : pending ? '…' : h[hk] ? '✓' : '✕'}
                         </div>
                       )
                     })}
@@ -235,6 +239,9 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                 const r = settings.profile ? energyReadout(settings.profile, day, t.kcal) : null
                 const surplus = t.kcal > 0 && (r ? t.kcal > r.maintenance : ratio > 1.1)
                 const future = k > todayKey()
+                // settled verdicts only: in-band green and surplus red hold for
+                // today, but an under-band today is merely unfinished
+                const inPlay = k === todayKey() && !surplus && ratio < 0.9
                 return (
                   <div key={k} className="group relative flex flex-1 flex-col justify-end self-stretch">
                     <div
@@ -243,8 +250,9 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                         height: `${h}%`,
                         background: surplus ? 'var(--color-over)'
                           : ratio >= 0.9 && ratio <= 1.1 ? 'var(--color-grind)'
+                          : inPlay ? 'var(--color-mist)'
                           : 'var(--color-carbs)',
-                        opacity: future ? 0.15 : 1,
+                        opacity: future ? 0.15 : inPlay ? 0.45 : 1,
                       }}
                     />
                     {t.kcal === 0 && <div className="h-px bg-edge" />}
@@ -266,6 +274,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
               <Legend color="var(--color-grind)" label="on target" />
               <Legend color="var(--color-carbs)" label="off target" />
               <Legend color="var(--color-over)" label="surplus (above burn)" />
+              <Legend color="var(--color-mist)" label="today, in play" />
             </div>
           </Panel>
           </div>
