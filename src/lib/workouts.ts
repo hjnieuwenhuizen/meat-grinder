@@ -1,3 +1,4 @@
+import { STRENGTH_KCAL_PER_MIN } from './coach'
 import type { Workout, WorkoutSet, WorkoutTypeId } from '../types'
 
 export const WORKOUT_TYPES: { id: WorkoutTypeId; label: string; icon: string }[] = [
@@ -126,13 +127,22 @@ export const fmtPace = (minPerKm: number): string => {
   return `${m}:${String(s).padStart(2, '0')} /km`
 }
 
+// strength kcal shown as the honest capped estimate, watch number aside
+const kcalDetail = (w: Pick<Workout, 'type' | 'duration' | 'kcal'>): string | null => {
+  if (!w.kcal) return null
+  if (STRENGTH_TYPES.includes(w.type) && w.duration && w.kcal > w.duration * STRENGTH_KCAL_PER_MIN) {
+    return `~${Math.round(w.duration * STRENGTH_KCAL_PER_MIN)} kcal est (watch ${w.kcal})`
+  }
+  return `${w.kcal} kcal`
+}
+
 // "38 min · 481 kcal · 5.2 km · 5:32 /km · ♥ 142 (max 167) · ↑86m"
 export const workoutDetails = (
-  w: Pick<Workout, 'duration' | 'kcal' | 'distance' | 'avgHr' | 'maxHr' | 'paceMinKm' | 'speedKmh' | 'elevM' | 'cadence'>,
+  w: Pick<Workout, 'type' | 'duration' | 'kcal' | 'distance' | 'avgHr' | 'maxHr' | 'paceMinKm' | 'speedKmh' | 'elevM' | 'cadence'>,
 ): string =>
   [
     w.duration ? `${w.duration} min` : null,
-    w.kcal ? `${w.kcal} kcal` : null,
+    kcalDetail(w),
     w.distance ? `${w.distance} km` : null,
     w.paceMinKm ? fmtPace(w.paceMinKm) : null,
     w.speedKmh ? `${w.speedKmh} km/h` : null,
