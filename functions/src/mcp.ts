@@ -124,7 +124,7 @@ const energyOf = (settings: Record<string, unknown>, day: DayDoc, eatenKcal: num
   if (!p) return null
   const age = Math.max(14, new Date().getFullYear() - p.birthYear)
   const bmr = 10 * p.weightKg + 6.25 * p.heightCm - 5 * age + (p.sex === 'male' ? 5 : -161)
-  const exerciseKcal = (day.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
+  const exerciseKcal = Math.round((day.workouts ?? []).reduce((s, w) => s + estWorkoutBurn(w, p.weightKg), 0))
   const maintenance = Math.round(bmr * (ACTIVITY_FACTORS[p.activity] ?? 1.35) + exerciseKcal)
   const delta = Math.round(eatenKcal - maintenance)
   const zone =
@@ -142,16 +142,28 @@ const energyOf = (settings: Record<string, unknown>, day: DayDoc, eatenKcal: num
   }
 }
 
+// per-workout burn estimator — MUST mirror workoutBurn in src/lib/coach.ts:
+// runs by physics (≈1 kcal/kg/km), strength capped at 5.5 kcal/min (HR-based
+// watch estimates read between-set pressor response as cardio, ~50–100% hot)
+const STRENGTH_BURN_TYPES = ['push', 'legs', 'pull', 'strength']
+const estWorkoutBurn = (
+  w: { type?: string; kcal?: number | null; distance?: number | null; duration?: number | null },
+  weightKg?: number,
+): number => {
+  if (w.type === 'run' && weightKg && w.distance) return weightKg * w.distance
+  if (STRENGTH_BURN_TYPES.includes(w.type ?? '')) {
+    const watch = w.kcal ?? 0
+    return w.duration ? Math.min(watch, w.duration * 5.5) : watch * 0.6
+  }
+  return w.kcal ?? 0
+}
+
 // endurance fueling: 60% of estimated burn above 400 kcal (cap 1000) added to
-// the goal as carbs — partial on purpose. Runs use ≈1 kcal/kg/km instead of
-// wearable calories (which run hot). MUST mirror applyFuel in src/lib/coach.ts.
+// the goal as carbs — partial on purpose. MUST mirror applyFuel in src/lib/coach.ts.
 const fuelOf = (day: DayDoc, settings: Record<string, unknown>): number => {
   const p = settings.profile as { weightKg?: number } | undefined
   if (!p) return 0
-  const ex = (day.workouts ?? []).reduce(
-    (s, w) => s + (w.type === 'run' && p.weightKg && w.distance ? p.weightKg * w.distance : w.kcal ?? 0),
-    0,
-  )
+  const ex = (day.workouts ?? []).reduce((s, w) => s + estWorkoutBurn(w, p.weightKg), 0)
   return Math.min(1000, Math.max(0, Math.round((0.6 * (ex - 400)) / 10) * 10))
 }
 
@@ -1237,10 +1249,12 @@ const APP_GUIDE = `# How Meat Grinder works (for AI coaches)
 - GOAL SNAPSHOTS: each day freezes its goals the first time it is written. Later Settings
   changes apply from today forward — historical days, scores and reports never change.
 - ENDURANCE FUEL: when a day's estimated workout burn exceeds 400 kcal, that day's goal
-  grows by 60% of the excess (capped +1000), added as carbs and labelled. Runs are estimated
-  from physics (≈1 kcal × kg × km) instead of wearable calories, which run 15–20% hot; other
-  activities fall back to logged kcal. A gym session adds ~0; an 18 km run adds ~670.
-  This is the ONLY exercise add-back.
+  grows by 60% of the excess (capped +1000), added as carbs and labelled. Burn estimates:
+  runs by physics (≈1 kcal × kg × km — watches run ~15% hot); STRENGTH capped at
+  5.5 kcal/min (HR-based watch numbers read between-set pressor response as cardio and
+  run 50–100% hot — research: ~57% overestimation); other activities use logged kcal.
+  A gym session adds ~0 fuel by design; an 18 km run adds ~670. The training-day +300
+  already covers lifting. This is the ONLY exercise add-back.
 - Energy zones (informational): eaten vs (rest TDEE + logged exercise) → extreme cut /
   aggressive / moderate / mild / maintenance / surplus, with est. kg/week.
 

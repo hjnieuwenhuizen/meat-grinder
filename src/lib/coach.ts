@@ -165,10 +165,11 @@ export const ZONES: EnergyZone[] = [
   { id: 'surplus', label: 'Gaining', color: 'var(--color-fat)' },
 ]
 
-/** today's actual burn: rest TDEE + every logged workout's calories.
+/** today's actual burn: rest TDEE + every logged workout's ESTIMATED cost
+ *  (runs by physics, strength capped — see workoutBurn).
  *  Insight only — the budget/goal NEVER eats this back. */
 export const maintenanceToday = (p: Profile, day: Pick<DayDoc, 'workouts'> | null | undefined): number =>
-  restTdee(p) + (day?.workouts ?? []).reduce((s, w) => s + (w.kcal ?? 0), 0)
+  restTdee(p) + (day?.workouts ?? []).reduce((s, w) => s + workoutBurn(w, p.weightKg), 0)
 
 export const zoneFor = (delta: number): EnergyZone => {
   if (delta <= -1000) return ZONES[0]
@@ -248,10 +249,19 @@ export const FUEL_FRACTION = 0.6
 export const FUEL_CAP = 1000
 export const RUN_KCAL_PER_KG_KM = 1
 
-const workoutBurn = (w: Pick<Workout, 'type' | 'kcal' | 'distance'>, weightKg?: number): number =>
-  w.type === 'run' && weightKg && w.distance
-    ? RUN_KCAL_PER_KG_KM * weightKg * w.distance
-    : w.kcal ?? 0
+/** lab-measured lifting runs ~3–6 kcal/min; HR-based watch estimates read the
+ *  between-set pressor response as cardio and land ~50–100% hot */
+export const STRENGTH_KCAL_PER_MIN = 5.5
+const STRENGTH_BURN_TYPES = ['push', 'legs', 'pull', 'strength']
+
+const workoutBurn = (w: Pick<Workout, 'type' | 'kcal' | 'distance' | 'duration'>, weightKg?: number): number => {
+  if (w.type === 'run' && weightKg && w.distance) return RUN_KCAL_PER_KG_KM * weightKg * w.distance
+  if (STRENGTH_BURN_TYPES.includes(w.type)) {
+    const watch = w.kcal ?? 0
+    return w.duration ? Math.min(watch, w.duration * STRENGTH_KCAL_PER_MIN) : watch * 0.6
+  }
+  return w.kcal ?? 0
+}
 
 export const fuelBonusKcal = (day: Pick<DayDoc, 'workouts'> | null | undefined, weightKg?: number): number => {
   const ex = (day?.workouts ?? []).reduce((s, w) => s + workoutBurn(w, weightKg), 0)
