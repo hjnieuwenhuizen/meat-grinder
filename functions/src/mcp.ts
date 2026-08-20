@@ -666,15 +666,20 @@ const bestSetOf = (sets: StoredSet[]): StoredSet | null => {
 /** most recent earlier session per exercise: date, best set, working volume */
 const previousPerformance = async (uid: string, beforeDate: string, exercises: string[]) => {
   if (!exercises.length) return []
+  // ascending range on document ids (yyyy-mm-dd) uses Firestore's built-in
+  // index — orderBy(__name__, 'desc') would demand a custom one
+  const sinceDate = new Date(`${beforeDate}T12:00:00`)
+  sinceDate.setDate(sinceDate.getDate() - 90)
+  const since = `${sinceDate.getFullYear()}-${String(sinceDate.getMonth() + 1).padStart(2, '0')}-${String(sinceDate.getDate()).padStart(2, '0')}`
   const snap = await db
     .collection(`users/${uid}/days`)
-    .orderBy(FieldPath.documentId(), 'desc')
-    .limit(60)
+    .where(FieldPath.documentId(), '>=', since)
+    .where(FieldPath.documentId(), '<', beforeDate)
     .get()
+  const docs = [...snap.docs].sort((a, b) => b.id.localeCompare(a.id))
   const out: Record<string, unknown>[] = []
   const wanted = new Set(exercises)
-  for (const d of snap.docs) {
-    if (d.id >= beforeDate) continue
+  for (const d of docs) {
     if (!wanted.size) break
     const workouts = ((d.data() as Partial<DayDoc>).workouts ?? []) as { sets?: StoredSet[] }[]
     for (const ex of [...wanted]) {
