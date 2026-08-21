@@ -84,7 +84,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
       )
     : null
 
-  const hitsOf = (k: string): { protein: boolean; kcal: boolean } | null => {
+  const hitsOf = (k: string): { protein: boolean; kcal: boolean; dry: boolean } | null => {
     const day = days?.[k]
     if (!day?.entries?.length) return null
     const { goal: g } = applyFuel(goalFor(settings, day), day, settings.profile)
@@ -92,6 +92,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
     return {
       protein: t.protein >= g.protein * 0.95,
       kcal: kcalInRange(g.kcal, t.kcal, settings.profile, day),
+      dry: !day.entries.some((e) => e.alcohol),
     }
   }
 
@@ -110,7 +111,7 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
     ? Math.max(settings.rest.kcal, settings.training.kcal, ...keys.map((k) => totalsOf(days[k]).kcal))
     : 1
 
-  const HITS: [('protein' | 'kcal'), string][] = [['protein', 'Protein'], ['kcal', 'Calories']]
+  const HITS: [('protein' | 'kcal' | 'dry'), string][] = [['protein', 'Protein'], ['kcal', 'Calories'], ['dry', '🍺 Dry']]
 
   return (
     <div className="space-y-4">
@@ -200,8 +201,10 @@ function RangeView({ uid, settings, mode }: { uid: string; settings: Settings; m
                     {keys.map((k) => {
                       const h = hitsOf(k)
                       const future = k > todayKey()
-                      // today's missed targets are still in play — pending, not failed
-                      const pending = k === todayKey() && h != null && !h[hk]
+                      // today's missed targets are still in play — pending, not
+                      // failed. Dry is the inverse: a drink can't be undone
+                      // (settled ✕), while sober-so-far only earns ✓ at day end
+                      const pending = k === todayKey() && h != null && (hk === 'dry' ? h[hk] : !h[hk])
                       return (
                         <div
                           key={k}
