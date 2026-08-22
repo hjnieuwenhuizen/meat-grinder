@@ -9,6 +9,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
 import * as crypto from 'crypto'
 import { GarminConnect } from 'garmin-connect'
+import { ingestGarminActivity, type MergeWorkout } from './merge.js'
 
 if (!getApps().length) initializeApp()
 const db = getFirestore()
@@ -314,58 +315,28 @@ async function syncUser(uid: string, full = false, trigger = 'manual'): Promise<
         : null,
     }
 
-    const existing = day.workouts.find((w) => w.garminId === act.activityId)
-    if (existing) {
-      // backfill metrics onto workouts synced before we captured them
-      if (existing.avgHr == null && (metrics.avgHr != null || metrics.paceMinKm != null || metrics.elevM != null)) {
-        Object.assign(existing, metrics)
-        day._dirty = true
-        logger.info(`Backfilled metrics ${dateKey}: ${act.activityId}`)
-      }
-      continue
-    }
-
-    // sets logged live in the app during this session? MERGE the watch's
-    // activity onto that card (time-matched within 3h) instead of duplicating
-    const STRENGTH: WorkoutTypeId[] = ['push', 'legs', 'pull', 'strength']
-    if (STRENGTH.includes(type)) {
-      const actStart = new Date(start.replace(' ', 'T')).getTime()
-      const manual = day.workouts.find(
-        (w) =>
-          !w.garminId &&
-          STRENGTH.includes(w.type) &&
-          w.sets?.length &&
-          (!w.startedAt || Math.abs(w.startedAt - actStart) < 3 * 3600_000),
-      )
-      if (manual) {
-        manual.garminId = act.activityId
-        manual.name = act.activityName?.trim() || manual.name || null
-        if (act.duration) manual.duration = Math.round(act.duration / 60)
-        if (act.calories) manual.kcal = Math.round(act.calories)
-        Object.assign(manual, metrics)
-        day._dirty = true
-        workoutsAdded++
-        logger.info(`Merged Garmin strength ${act.activityId} into live-logged sets ${dateKey}`)
-        continue
-      }
-    }
-
     const hour = Number(start.slice(11, 13)) + Number(start.slice(14, 16)) / 60
-    day.workouts.push({
-      id: crypto.randomUUID(),
-      garminId: act.activityId,
-      type,
-      // keep Garmin's own label as metadata — the app shows it as the title
-      name: act.activityName?.trim() || null,
-      duration: act.duration ? Math.round(act.duration / 60) : null,
-      kcal: act.calories ? Math.round(act.calories) : null,
-      distance: DISTANCE_TYPES.includes(type) && act.distance ? Math.round((act.distance / 1000) * 10) / 10 : null,
-      when: 'before',
-      meal: slotFor(hour),
-      ...metrics,
-    })
-    if ((settings as { trainingEnabled?: boolean }).trainingEnabled) day.training = true
+    const { workouts, action } = ingestGarminActivity(
+      day.workouts as unknown as MergeWorkout[],
+      {
+        activityId: act.activityId,
+        type,
+        name: act.activityName?.trim() || null,
+        startMs: new Date(start.replace(' ', 'T')).getTime(),
+        durationMin: act.duration ? Math.round(act.duration / 60) : null,
+        kcal: act.calories ? Math.round(act.calories) : null,
+        distanceKm: DISTANCE_TYPES.includes(type) && act.distance ? Math.round((act.distance / 1000) * 10) / 10 : null,
+        meal: slotFor(hour),
+        metrics,
+      },
+      () => crypto.randomUUID(),
+    )
+    if (action === 'unchanged') continue
+    day.workouts = workouts as unknown as Workout[]
     day._dirty = true
+    logger.info(`Garmin ${act.activityId} ${dateKey}: ${action}`)
+    if (action === 'backfilled') continue
+    if ((settings as { trainingEnabled?: boolean }).trainingEnabled) day.training = true
     workoutsAdded++
   }
 

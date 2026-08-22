@@ -13,6 +13,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 // lazy circular import is safe under CJS: only called inside request handlers
 import { syncIfStale } from './index.js'
+import { pickGarminShell, mergedName, type MergeWorkout } from './merge.js'
 
 if (!getApps().length) initializeApp()
 const db = getFirestore()
@@ -709,13 +710,22 @@ const logSets = async (uid: string, input: LogSetsInput) => {
   const ref = db.doc(`users/${uid}/days/${key}`)
   const day: DayDoc = { training: false, entries: [], workouts: [], ...((await ref.get()).data() as Partial<DayDoc>) }
   const settings = await loadSettings(uid)
-  // append to today's live strength card if one is open, else start one
-  const open = (day.workouts ?? []).find(
+  // append to today's live strength card if one is open; if the watch synced
+  // FIRST, adopt its Garmin-only shell instead of creating a second card
+  const open = ((day.workouts ?? []).find(
     (w) => ['push', 'legs', 'pull', 'strength'].includes(w.type) && !(w as { garminId?: number }).garminId,
-  ) as (Record<string, unknown> & { sets?: unknown[] }) | undefined
+  ) ?? pickGarminShell(day.workouts as unknown as MergeWorkout[], Date.now()) ?? undefined) as unknown as
+    | (Record<string, unknown> & { sets?: unknown[] })
+    | undefined
   let workout: Record<string, unknown>
   if (open) {
     open.sets = [...((open.sets as unknown[]) ?? []), ...clean]
+    if (open.garminId && !((open.sets as unknown[]).length - clean.length)) {
+      // adopting a shell: the user's split type wins over Garmin's generic label
+      open.type = type
+      open.name = mergedName(type, (open.name as string | null) ?? null, null)
+      if (open.startedAt == null) open.startedAt = Date.now()
+    }
     workout = open
   } else {
     workout = {

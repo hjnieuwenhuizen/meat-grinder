@@ -6,7 +6,8 @@
     "node": "20"
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -16,6 +17,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }
 }
